@@ -7,4 +7,6 @@ With this program you can test the effect of inflections / Julia morphings on th
 
 Forum thread at fractalforums for this program with more information: https://fractalforums.org/other/55/explore-fractals-inflection-tool/777
 
+All the code that really does something is in ExploreFractals.cpp. I intentionally used only one file to make it easy to copy and paste the code, and the size is still manageable. In the beginning I compiled it with GCC and then moved to visual studio, which introduced the other files, but if I delete them it doesn't work anymore.
+
 ![Environment screenshot](https://user-images.githubusercontent.com/29734312/71610752-ea575400-2b93-11ea-99fb-e6a266c5e90d.png)
