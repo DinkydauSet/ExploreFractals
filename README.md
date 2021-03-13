@@ -13,6 +13,4 @@ You can also find more information about the program there.
 
 ### Compiling the code
 
-All the code that really does something is in ExploreFractals.cpp. I intentionally used only one file to make it easy to copy and paste the code, and the size is still manageable. In the beginning I compiled it with GCC and then moved to visual studio, which introduced the other files. When I delete them it doesn't work anymore, so I keep them but I don't know what they're for. This is what my environment looks like:
-
-![Environment screenshot](https://user-images.githubusercontent.com/29734312/71610752-ea575400-2b93-11ea-99fb-e6a266c5e90d.png)
+The program was compiled with visual studio 2017. The only file that needs to be compiled is ExploreFractals.cpp. I have included the rapidjson library with the code. Other resources such as intrin.h for usage of AVX instructions are available on my computer but I don't know where they come from. Therefore I don't know what is needed exactly to compile this code. I don't have enough time to investigate that. One of my plans is to compile the program with GCC in order to find out what exactly is required to compile. I also suspect there may be some visual studio-specific code, as I've read that visual studio has some slight deviations from the c++ standard. I want to get rid of any incompatibilities eventually when I have enough time.
