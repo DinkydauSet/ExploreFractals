@@ -1,9 +1,3 @@
-//Visual Studio requires this for no clear reason
-#include "stdafx.h"
-
-//windows
-#include <windows.h>
-
 //standard library
 #include <iostream>
 #include <cassert>
@@ -13,7 +7,6 @@
 #include "common.cpp"
 #include "FractalParameters.cpp"
 
-#include "windows_util.cpp"
 
 
 #ifndef _FractalCanvas_
@@ -22,18 +15,6 @@
 using namespace std;
 
 const long long MAXIMUM_BITMAP_SIZE = 2147483648; // 2^31
-
-HBITMAP screenBMP;
-
-inline UINT rgbColorAverage(UINT u1, UINT u2, double ratio) {
-	assert(ratio >= 0);
-	assert(ratio <= 1);
-	return RGB(
-		(unsigned char)((GetRValue(u1))*(1 - ratio) + (GetRValue(u2))*ratio) | 1,
-		(unsigned char)((GetGValue(u1))*(1 - ratio) + (GetGValue(u2))*ratio) | 1,
-		(unsigned char)((GetBValue(u1))*(1 - ratio) + (GetBValue(u2))*ratio) | 1
-	);
-}
 
 struct IterData {
 	int iterationCount;
@@ -45,13 +26,13 @@ class FractalCanvas {
 public:
 	IterData* iters;
 	uint* ptPixels; //bitmap colors representing the iteration data
-	int* ptPixelsMetadata; //represents how many calculated pixels the color is an average of
 	FractalParameters S;
 	int lastRenderID;
 	int activeRenders;
 	int lastBitmapRenderID;
 	int activeBitmapRenders;
 	unsigned int number_of_threads;
+	BitmapManager* bitmapManager;
 
 	int cancelRender() {
 		/*
@@ -67,9 +48,11 @@ public:
 
 	void createNewRender(bool);
 
-	FractalCanvas() {}
-	FractalCanvas(FractalParameters& parameters, unsigned int number_of_threads) {
+	FractalCanvas() {} //required to declare a FractalCanvas without assigning a value
+
+	FractalCanvas(FractalParameters& parameters, unsigned int number_of_threads, BitmapManager& bitmapManager) {
 		cout << "constructing FractalCanvas" << endl;
+		this->bitmapManager = &bitmapManager;
 		lastRenderID = 0;
 		activeRenders = 0;
 		lastBitmapRenderID = 0;
@@ -85,7 +68,7 @@ public:
 		cout << "canvas constructed with dimensions " << S.get_width() << "x" << S.get_height() << endl;
 	}
 	~FractalCanvas() {
-		cout << "deleting fractalcanvas" << endl;
+		if(debug) cout << "deleting fractalcanvas" << endl;
 	}
 
 	bool changeParameters(FractalParameters& newS) {
@@ -100,10 +83,6 @@ public:
 		int number_of_colors = S.gradientColors.size();
 		double gradientPosition = (iterationCount + S.get_gradientOffsetTerm()) * S.get_gradientSpeedFactor();
 		uint asInt = (uint)gradientPosition;
-		/*
-		uint previousColor = gradientColors[asInt & (NUMBER_OF_COLORS - 1)];
-		uint nextColor = gradientColors[(asInt + 1) & (NUMBER_OF_COLORS - 1)];
-		*/
 		uint previousColor = S.gradientColors[asInt % number_of_colors];
 		uint nextColor = S.gradientColors[(asInt + 1) % number_of_colors];
 		double ratio = gradientPosition - asInt;
@@ -140,11 +119,6 @@ public:
 				cout << "Size outside of allowed range." << endl;
 				cout << "width: " << newWidth << "  " << "height: " << newHeight << endl;
 				cout << "maximum allowed size: " << MAXIMUM_BITMAP_SIZE << endl;
-				MessageBox(NULL,
-					_T("Size outside of allowed range"),
-					_T("Problem"),
-					NULL
-				);
 				success = false;
 				return false;
 			}
@@ -168,29 +142,11 @@ public:
 			}
 
 			if (realloc_bitmap) {
-				cout << "reallocating ptPixelMetadata" << endl;
-				int size = S.get_screenWidth() * S.get_screenHeight();
-				if (oldWidth * oldHeight != 0) free(ptPixelsMetadata);
-				ptPixelsMetadata = (int*)malloc(size * sizeof(int));
-				cout << "reallocated ptPixelMetadata, size: " << size << endl;
-
 				cout << "reallocating bitmap" << endl;
-				DeleteObject(screenBMP);
-				HDC hdc = CreateDCA("DISPLAY", NULL, NULL, NULL);
-				BITMAPINFO RGB32BitsBITMAPINFO;
-				ZeroMemory(&RGB32BitsBITMAPINFO, sizeof(BITMAPINFO));
-				RGB32BitsBITMAPINFO.bmiHeader.biSize = sizeof(BITMAPINFOHEADER);
-				RGB32BitsBITMAPINFO.bmiHeader.biWidth = newScreenWidth;
-				RGB32BitsBITMAPINFO.bmiHeader.biHeight = newScreenHeight;
-				RGB32BitsBITMAPINFO.bmiHeader.biPlanes = 1;
-				RGB32BitsBITMAPINFO.bmiHeader.biBitCount = 32;
-				screenBMP = CreateDIBSection(
-					hdc,
-					(BITMAPINFO *)&RGB32BitsBITMAPINFO,
-					DIB_RGB_COLORS,
-					(void**)&ptPixels,
-					NULL, 0
-				);
+
+				int size = newScreenWidth * newScreenHeight;
+				ptPixels = bitmapManager->realloc(newScreenWidth, newScreenHeight);
+
 				cout << "reallocated bitmap" << endl;
 			}
 		}
@@ -209,9 +165,7 @@ public:
 				lock_guard<mutex> guard(drawingBitmap);
 				if(debug) cout << "refreshDuringBitmapRender " << bitmapRenderID << " has lock drawingBitmap" << endl;
 				if (lastBitmapRenderID == bitmapRenderID && activeRenders == 0) { //if a render is active, it also has a refreshthread
-					HDC hdc = GetDC(hWndMain);
-					DrawBitmap(hdc, 0, 0, screenBMP, SRCCOPY, screenWidth, screenHeight);
-					ReleaseDC(hWndMain, hdc);
+					bitmapManager->draw();
 				}
 				else {
 					if(debug) if(activeRenders == 0) cout << "refreshDuringBitmapRender " << bitmapRenderID << " doesn't draw because the render was cancelled" << endl;
@@ -254,6 +208,24 @@ public:
 	inline IterData getIterData(int x, int y) {
 		return iters[itersIndex_of_itersXY(x,y)];
 	}
+
+	inline double_c map(int xPos, int yPos) {
+		return S.map(xPos, yPos);
+	}
+
+	inline void setPixel(int i, int j, int iterationCount, bool GUESSED)
+	{
+		assert(i < S.get_width() && j < S.get_height());
+
+		bool isInMinibrot = iterationCount == S.get_maxIters();
+		int itersIndex = itersIndex_of_itersXY(i, j);
+
+		iters[itersIndex] = {
+			iterationCount,
+			GUESSED,
+			isInMinibrot
+		};
+	}
 	
 	void renderBitmapRect(bool highlight_guessed, int xfrom, int xto, int yfrom, int yto, int bitmapRenderID) {
 		//lock_guard<mutex> guard(test);
@@ -273,23 +245,23 @@ public:
 
 					uint sumR=0, sumG=0, sumB=0;
 					uint color;
-					IterData it;
+					//IterData it;
 
 					for (int i=0; i<samples; i++) {
 						it = iters[itersStartIndex + i];
-						if (it.inMinibrot && !it.guessed) color = RGB(0, 0, 255);
-						else if (it.inMinibrot)           color = RGB(255, 0, 0);
-						else if (it.guessed)              color = RGB(0, 255, 0);
+						if (it.inMinibrot && !it.guessed) color = rgb(255, 0, 0);
+						else if (it.inMinibrot)           color = rgb(0, 0, 255);
+						else if (it.guessed)              color = rgb(0, 255, 0);
 						else                              color = gradient(it.iterationCount);
-						sumR += GetRValue(color);
-						sumG += GetGValue(color);
-						sumB += GetBValue(color);
+						sumR += getRValue(color);
+						sumG += getGValue(color);
+						sumB += getBValue(color);
 					}
 				
-					ptPixels[screenWidth * (screenHeight - py - 1) + px] = RGB(
-						(unsigned char)(sumR / samples),
-						(unsigned char)(sumG / samples),
-						(unsigned char)(sumB / samples)
+					ptPixels[screenWidth * (screenHeight - py - 1) + px] = rgb(
+						(uchar)(sumR / samples),
+						(uchar)(sumG / samples),
+						(uchar)(sumB / samples)
 					);
 				}
 				if (lastBitmapRenderID != bitmapRenderID) {
@@ -310,17 +282,17 @@ public:
 
 					for (int i=0; i<samples; i++) {
 						it = iters[itersStartIndex + i];
-						if (it.inMinibrot)                color = RGB(0, 0, 0);
+						if (it.inMinibrot)                color = rgb(0, 0, 0);
 						else                              color = gradient(it.iterationCount);
-						sumR += GetRValue(color);
-						sumG += GetGValue(color);
-						sumB += GetBValue(color);
+						sumR += getRValue(color);
+						sumG += getGValue(color);
+						sumB += getBValue(color);
 					}
 				
-					ptPixels[screenWidth * (screenHeight - py - 1) + px] = RGB(
-						(unsigned char)(sumR / samples),
-						(unsigned char)(sumG / samples),
-						(unsigned char)(sumB / samples)
+					ptPixels[screenWidth * (screenHeight - py - 1) + px] = rgb(
+						(uchar)(sumR / samples),
+						(uchar)(sumG / samples),
+						(uchar)(sumB / samples)
 					);
 				}
 				if (lastBitmapRenderID != bitmapRenderID) {
@@ -400,14 +372,14 @@ public:
 			{
 				lock_guard<mutex> guard(drawingBitmap);
 				if (lastBitmapRenderID == bitmapRenderID) {
-					HDC hdc = GetDC(hWndMain);
-					DrawBitmap(hdc, 0, 0, screenBMP, SRCCOPY, S.get_screenWidth(), S.get_screenHeight());
-					ReleaseDC(hWndMain, hdc);
+					bitmapManager->draw();
 				}
 			}
 			refreshThread.join();
 		}
 	}
+
+	
 };
 
 #endif

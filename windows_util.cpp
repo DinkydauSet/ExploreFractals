@@ -1,12 +1,12 @@
-//Visual Studio requires this for no clear reason
-#include "stdafx.h"
-
+//windows
 #include <Windowsx.h>
 #include <Windows.h>
 #include <CommCtrl.h>
 #include <commdlg.h>
 
+//this program
 #include "common.cpp"
+
 
 
 #ifndef _windows_util_
@@ -116,5 +116,47 @@ BOOL DrawBitmap(HDC hDC, int x, int y, HBITMAP& hBitmap, DWORD dwROP, int screen
 	DeleteDC(hDCBits);
 	return bResult;
 }
+
+class Win32BitmapManager : public BitmapManager {
+public:
+	uint* ptPixels;
+	HBITMAP screenBMP;
+	int screenWidth;
+	int screenHeight;
+	HWND* hWnd;
+
+	Win32BitmapManager() {}
+	Win32BitmapManager(HWND* hWnd) {
+		this->hWnd = hWnd;
+	}
+
+	uint* realloc(int newScreenWidth, int newScreenHeight) {
+		DeleteObject(screenBMP);
+		HDC hdc = CreateDCA("DISPLAY", NULL, NULL, NULL);
+		BITMAPINFO RGB32BitsBITMAPINFO;
+		ZeroMemory(&RGB32BitsBITMAPINFO, sizeof(BITMAPINFO));
+		RGB32BitsBITMAPINFO.bmiHeader.biSize = sizeof(BITMAPINFOHEADER);
+		RGB32BitsBITMAPINFO.bmiHeader.biWidth = newScreenWidth;
+		RGB32BitsBITMAPINFO.bmiHeader.biHeight = newScreenHeight;
+		RGB32BitsBITMAPINFO.bmiHeader.biPlanes = 1;
+		RGB32BitsBITMAPINFO.bmiHeader.biBitCount = 32;
+		screenBMP = CreateDIBSection(
+			hdc,
+			(BITMAPINFO*)&RGB32BitsBITMAPINFO,
+			DIB_RGB_COLORS,
+			(void**)&ptPixels,
+			NULL, 0
+		);
+		screenWidth = newScreenWidth;
+		screenHeight = newScreenHeight;
+		return ptPixels;
+	}
+
+	void draw() {
+		HDC hdc = GetDC(*hWnd);
+		DrawBitmap(hdc, 0, 0, screenBMP, SRCCOPY, screenWidth, screenHeight);
+		ReleaseDC(*hWnd, hdc);
+	}
+};
 
 #endif
