@@ -140,6 +140,8 @@ namespace MenuOption {
 		,CANCEL_RENDER
 		,WINDOW_JSON
 		,SAVE_BOTH
+		,ROTATION_LEFT
+		,ROTATION_RIGHT
 		//Options to change the fractal type:
 		,BURNING_SHIP
 		,M2
@@ -155,9 +157,6 @@ namespace MenuOption {
 		,DEPARTMENT_IT
 		,DEPARTMENT_MT
 		,DEPARTMENT_RND
-		//test:
-		,ROTATION_LEFT
-		,ROTATION_RIGHT
 	};
 }
 
@@ -1151,7 +1150,7 @@ LRESULT CALLBACK OptionsProc(HWND hOptions, UINT message, WPARAM wParam, LPARAM 
 			char aMaxIters[16]; GetDlgItemTextA(hOptions, optionMaxIters, aMaxIters, sizeof(aMaxIters));
 			int newMaxIters = atoi(aMaxIters);
 			if (newMaxIters == 0) {
-				AddMenus(hWndMain, false);
+				AddMenus(hWndMain, true);
 			}
 			recalcNeeded |= canvas.S.setMaxIters(newMaxIters);
 
