@@ -1,17 +1,3 @@
-/*
-TO DO:
-4. Selectiehokje maken "disable setting inflections" of zo, of "mouse click action mode: " en dan keuze tussen "inflection" en "zoom"
-39. correcte hoogte en breedte van het vester. Waarom verschilt die per computer?
-40. tip van thijs (details in zijn tekstbestand tips.txt): double_c-functies die veel worden aangeroepen referenties geven i.p.v. een kopie
-50. oud idee van claude: pas na 8 iteraties controleren of pixels ontsnapt zijn, en zo ja de iteraties terugdraaien voor de ontsnapte pixels (of voor allemaal? wat is de beste manier? en is 8 iteraties optimaal?)
-*/
-
-/*
-
-Fixed problems:
-	1. increasing oversampling in the JSON window crashes the program
-*/
-
 
 //Visual Studio requires this for no clear reason
 #include "stdafx.h"

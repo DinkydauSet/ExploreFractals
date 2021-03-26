@@ -201,9 +201,9 @@ public:
 	void setRotation(double angle) {
 		//There may be an existing rotation. This is the center of the viewport under that rotation:
 		double_c current_center = rotation(center);
-		//Move back to the location when the previous rotation was still used:
+		//move to that location
 		setCenterAndZoomPrivate(current_center, getZoomLevel());
-		//Use the center as the center of rotation and set the new angle and recompute the rotation_factor:
+		//Using the center as the center of rotation makes sense for the user. Here also the new angle is set and the rotation_factor recomputed:
 		center_of_rotation = center;
 		rotation_angle = angle;
 		rotation_factor = exp(angle * 2*pi*I);
