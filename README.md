@@ -13,14 +13,16 @@ You can also find more information about the program there.
 
 ### Characteristics
 
-1. adding Julia morphings is as easy as possible: one click
-2. optimized for speed
+1. add a Julia morphing with just one mouse click
+2. fast and responsive
 4. can save and load parameter files in a human-readable JSON format
 5. can render and save images with oversampling
 6. works in Wine
-7. limited to double precision floating point (I wish to improve that some day.)
-8. can be used to render images and animations as a headless commandline tool
-9. can also be used to explore unmorphed fractals
+7. can be used to render images and animations as a headless commandline tool
+8. can also be used to explore unmorphed fractals
+9. not for deep zooming and perturbation
+10. limited to double precision floating point (I wish to improve that some day.)
+
 
 ### Commandline parameters
 
