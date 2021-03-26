@@ -11,12 +11,22 @@ See this forum thread at fractalforums: https://fractalforums.org/other/55/explo
 
 You can also find more information about the program there.
 
+### Characteristics
+
+1. adding Julia morphings is as easy as possible: one click
+2. optimized for speed
+4. can save and load parameter files in a human-readable JSON format
+5. can render and save images with oversampling
+6. works in Wine
+7. limited to double precision floating point (I wish to improve that some day.)
+8. can be used to render images and animations as a headless commandline tool
+9. can also be used to explore unmorphed fractals
+
 ### Commandline parameters
 
-There are also commandline parameters:
+all available parameters:
 
 ```
-all available parameters:
     -p name.efp     use the file name.efp as initial parameters. default: default.efp
     --width         override the width parameter
     --height        override the height parameter
@@ -29,8 +39,11 @@ all available parameters:
     -o directory    use the directory as output directory for animation frames (example: C:\folder)
     -i              do not close the program after rendering an image or animation to continue interactive use
     --help or -h    show this text
+```
 
 examples:
+
+```
     ExploreFractals -p file.efp --animation --fps 60 --spi 3 --spz 0.6666 -o C:\folder -i
     ExploreFractals -p name.efp --width 1920 --height 1080 --oversampling 2
 ```
