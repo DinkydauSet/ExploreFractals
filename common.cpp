@@ -29,7 +29,7 @@ const double_c I(0, 1);
 const double pi = 3.1415926535897932384626433832795;
 
 //Constants
-const double PROGRAM_VERSION = 7.0;
+const double PROGRAM_VERSION = 7.1;
 const int NUMBER_OF_TRANSFORMATIONS = 7 + 1;
 const int MAXIMUM_TILE_SIZE = 50; //tiles in renderSilverRect smaller than this do not get subdivided.
 const int NEW_TILE_THREAD_MIN_PIXELS = 8; //For tiles with a width or height in PIXELS smaller than this no new threads are created, which has two reasons: 1. thread overhead; 2. See the explanation of stop_creating_threads in the function Render::renderSilverRect.

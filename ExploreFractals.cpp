@@ -908,7 +908,7 @@ LRESULT CALLBACK MainWndProc(HWND hWnd, UINT message, WPARAM wParam, LPARAM lPar
 		double zooms = zDelta > 0 ? 2 : -2; //these 2 and -2 are the zoom sizes used for zooming in and out. They could be any number so it could be a setting.
 		double magnificationFactor = pow(2, -zooms);
 
-		double_c zoomLocation = canvas.map(xPos, yPos);
+		double_c zoomLocation = canvas.map(xPos * oversampling, yPos * oversampling);
 
 		//This is the difference between the location that is being zoomed in on (the location of the mouse cursor) and the right and top borders of the viewport, expressed as a fraction.
 		double margin_right = xPos / (double)screenWidth;
