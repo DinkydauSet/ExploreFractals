@@ -29,7 +29,7 @@ You can also find more information about the program there.
 all available parameters in version 8:
 
 ```
- -p name.efp     use the file name.efp as initial parameters. default: default.efp
+-p name.efp     use the file name.efp as initial parameters. default: default.efp
 -o directory    use the directory as output directory (example: C:\folder)
 --width         override the width parameter
 --height        override the height parameter
