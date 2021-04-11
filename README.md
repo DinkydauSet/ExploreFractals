@@ -26,28 +26,30 @@ You can also find more information about the program there.
 
 ### Commandline parameters
 
-all available parameters:
+all available parameters in version 8:
 
 ```
-    -p name.efp     use the file name.efp as initial parameters. default: default.efp
-    --width         override the width parameter
-    --height        override the height parameter
-    --oversampling  override the oversampling parameter
-    --image         render the initial parameter file to an image
-    --animation     render an animation of the initial parameters
-    --fps number    the number of frames per second (integer)
-    --spi number    the number of seconds per inflection (floating point)
-    --spz number    the number of seconds per zoom (floating point)
-    -o directory    use the directory as output directory for animation frames (example: C:\folder)
-    -i              do not close the program after rendering an image or animation to continue interactive use
-    --help or -h    show this text
+ -p name.efp     use the file name.efp as initial parameters. default: default.efp
+-o directory    use the directory as output directory (example: C:\folder)
+--width         override the width parameter
+--height        override the height parameter
+--oversampling  override the oversampling parameter
+--image         render the initial parameter file to an image
+--animation     render an animation of the initial parameters
+--efp           save the parameters instead of rendering to an image (can be used to convert old parameter files or to store parameter files for every frame in an animation)
+--fps number    the number of frames per second (integer)
+--spi number    the number of seconds per inflection (floating point)
+--spz number    the number of seconds per zoom (floating point)
+--skipframes    number of frames to skip (for example to continue an unfinished animation render)
+-i              do not close the program after rendering an image or animation to continue interactive use
+--help or -h    show this text
 ```
 
 examples:
 
 ```
-    ExploreFractals -p file.efp --animation --fps 60 --spi 3 --spz 0.6666 -o C:\folder -i
-    ExploreFractals -p name.efp --width 1920 --height 1080 --oversampling 2
+ExploreFractals -p file.efp --animation --fps 60 --spi 3 --spz 0.6666 -o C:\folder -i
+ExploreFractals -p name.efp --width 1920 --height 1080 --oversampling 2
 ```
 
 ### Compiling the code
