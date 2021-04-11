@@ -1,3 +1,6 @@
+#ifndef WINDOWS_UTIL_H
+#define WINDOWS_UTIL_H
+
 //windows
 #include <Windowsx.h>
 #include <Windows.h>
@@ -6,11 +9,6 @@
 
 //this program
 #include "common.cpp"
-
-
-
-#ifndef _windows_util_
-#define _windows_util_
 
 HWND WINAPI CreateTrackbar(
 	HWND hwndDlg,  // handle of dialog box (parent window) 
@@ -48,6 +46,10 @@ HWND WINAPI CreateTrackbar(
 	return hwndTrack;
 }
 
+/*
+	Copied from FolderBrowser.cpp from Kalles Fraktaler: https://code.mathr.co.uk/kalles-fraktaler-2/blob/b8234f690ff44cd3f6af7d90d2c6c44695ccb4f0:/common/FolderBrowser.cpp
+	Function to open a file browser to select a filename or destination for a file to be read of written
+*/
 int BrowseFile(HWND hwParent, BOOL bOpen, const char *szTitle, const char *szExt, std::string &szFile) {
 	char buffer[1024] = { 0 };
 	strncpy(buffer, szFile.c_str(), sizeof(buffer));
@@ -119,7 +121,7 @@ BOOL DrawBitmap(HDC hDC, int x, int y, HBITMAP& hBitmap, DWORD dwROP, int screen
 
 class Win32BitmapManager : public BitmapManager {
 public:
-	uint* ptPixels;
+	ARGB* ptPixels;
 	HBITMAP screenBMP;
 	int screenWidth;
 	int screenHeight;
@@ -130,7 +132,7 @@ public:
 		this->hWnd = hWnd;
 	}
 
-	uint* realloc(int newScreenWidth, int newScreenHeight) {
+	ARGB* realloc(int newScreenWidth, int newScreenHeight) {
 		DeleteObject(screenBMP);
 		HDC hdc = CreateDCA("DISPLAY", NULL, NULL, NULL);
 		BITMAPINFO RGB32BitsBITMAPINFO;

@@ -1,16 +1,12 @@
+#ifndef FRACTALPARAMETERS_H
+#define FRACTALPARAMETERS_H
+
 //rapidjson
 #include "rapidjson/document.h"     // rapidjson's DOM-style API
 #include "rapidjson/prettywriter.h" // for stringify JSON
 
 //this program
 #include "common.cpp"
-
-
-
-#ifndef _FractalParameters_
-#define _FractalParameters_
-
-using namespace std;
 
 #define get_trick(name) get_ ## name
 #define readonly(type, name) \
@@ -30,13 +26,17 @@ using namespace std;
 
 class FractalParameters {
 
-	readonly(int, screenWidth)
-	readonly(int, screenHeight)
-	readonly(int, oversampling)
-	inline int get_height() {
+	public: FractalParameters() {
+		initialize();
+	}
+
+	readonly(uint, screenWidth)
+	readonly(uint, screenHeight)
+	readonly(uint, oversampling)
+	inline uint get_height() {
 		return screenHeight * oversampling;
 	}
-	inline int get_width() {
+	inline uint get_width() {
 		return screenWidth * oversampling;
 	}
 	readonly(double_c, center) //This is the center in the untransformed complex plane. The coordinate in the center of the viewport can be different because of rotation, inflections etc. Generally this touches on how the program does transformations. The viewport is first identified with a rectangular region in the complex plane, which is then transformed in various ways. This is the center of the starting region. The same goes for the topleftCorner, x_range and y_range.
@@ -45,21 +45,23 @@ class FractalParameters {
 	readonly(double, y_range)
 	readonly(double, pixelWidth)
 	readonly(double, pixelHeight)
-	readonly(int, maxIters)
+	readonly(uint, maxIters)
 	readonly(bool, julia)
 	readonly(Formula, formula)
 	readonly(int, formula_identifier)
 		
-	readonly(vector<double_c>, inflectionCoords) //the locations of created Julia morphings
-	readonly(int, inflectionCount)
+	public: vector<double_c> inflectionCoords;//the locations of created Julia morphings
+	public: inline vector<double_c> get_inflectionCoords() {return inflectionCoords;} 
+
+	readonly(uint, inflectionCount)
 	readonly(double, inflectionZoomLevel) //reset to this zoom level upon creating a new inflection
 
 	readonly(double, gradientSpeed) //a measure how much the gradient is stretched (or shrunk, when it's negative)
 	readonly(double, gradientOffset)
 	readonly(double, gradientSpeedFactor) //stored for efficiency
-	readonly(int, gradientOffsetTerm) //stored for efficiency
+	readonly(uint, gradientOffsetTerm) //stored for efficiency
 
-	vector<uint> gradientColors;
+	vector<ARGB> gradientColors;
 
 	readonly(double, rotation_angle) //angle between 0 and 1. 0 means 0 degrees. 0.25 means 90 degrees etc.
 	readonly(double_c, center_of_rotation)
@@ -74,16 +76,17 @@ public:
 	double_c juliaSeed;
 	int BI_choice;
 
-	double transferFunction(double gradientSpeedd) {
-		return pow(1.1, gradientSpeedd - 1);
+	double transferFunction(double gradientSpeed_) {
+		return pow(1.1, gradientSpeed_ - 1);
 	}
 
 	bool setGradientOffset(double newGradientOffset) {
 		bool changed = false;
+		assert(newGradientOffset >= 0.0 && newGradientOffset <= 1.0);
 		if (newGradientOffset >= 0.0 && newGradientOffset <= 1.0) {
 			changed = gradientOffset != newGradientOffset;
 			gradientOffset = newGradientOffset;
-			int interpolatedGradientLength = gradientColors.size() * transferFunction(gradientSpeed);
+			uint interpolatedGradientLength = gradientColors.size() * transferFunction(gradientSpeed);
 			gradientOffsetTerm = interpolatedGradientLength * gradientOffset;
 		}
 		return changed;
@@ -94,19 +97,20 @@ public:
 		gradientSpeed = newGradientSpeed;
 		double computedGradientSpeed = transferFunction(gradientSpeed);
 		gradientSpeedFactor = 1.0 / computedGradientSpeed;
+		assert(gradientSpeedFactor > 0);
 		gradientOffsetTerm = gradientColors.size() * computedGradientSpeed * gradientOffset;
 		return changed;
 	}
 
-	bool setGradientColors(vector<uint>& colors) {
+	bool setGradientColors(vector<ARGB>& colors) {
 		bool changed = false;
 		if (gradientColors.size() != colors.size()) {
 			gradientColors.resize(colors.size());
 			changed = true;
 		}
 		for (int i=0; i<colors.size(); i++) {
-			uint& old = gradientColors[i];
-			uint& new_ = colors[i];
+			ARGB& old = gradientColors[i];
+			ARGB& new_ = colors[i];
 			if (old != new_)
 				changed = true;
 			old = new_;
@@ -114,12 +118,13 @@ public:
 		return changed;
 	}
 
-	double getZoomLevel() {
+	double get_zoomLevel() {
 		return -log2(x_range) + 2;
 	}
 
-	bool setMaxIters(int newMaxIters) {
-		if (newMaxIters < 1 || newMaxIters == maxIters)
+	bool setMaxIters(uint newMaxIters) {
+		assert(newMaxIters > 0);
+		if (newMaxIters <= 0 || newMaxIters == maxIters)
 			return false;
 		maxIters = newMaxIters;
 		return true;
@@ -131,8 +136,8 @@ private:
 	*/
 	bool setCenterAndZoomPrivate(double_c newCenter, double zoom) {
 		//Set both of these settings together because the zoom level, topleftCorner coordinate and pixel size are related.
-		int width = get_width();
-		int height = get_height();
+		uint width = get_width();
+		uint height = get_height();
 
 		auto setRenderRange = [&](double zoom) {
 			double x_range_new = 4 / pow(2, zoom);
@@ -170,6 +175,9 @@ private:
 		recalcRequired |= setCoordinates(newCenter);
 		recalcRequired |= updatePixelSize();
 
+		assert(x_range > 0);
+		assert(y_range > 0);
+
 		return recalcRequired;
 	}
 
@@ -191,25 +199,38 @@ public:
 	}
 
 	bool setCenter(double_c newCenter) {
-		return setCenterAndZoomAbsolute(newCenter, getZoomLevel());
+		return setCenterAndZoomAbsolute(newCenter, get_zoomLevel());
 	}
 
 	bool setZoomLevel(double zoomLevel) {
 		return setCenterAndZoomAbsolute(center, zoomLevel);
 	}
 
+	/*
+		normalize an angle to a value between 0 end 1
+	*/
+	double normalize_angle(double angle) {
+		angle -= (int)angle;
+		if (angle < 0)
+			angle += 1;
+		assert(angle >= 0.0); assert(angle <= 1.0);
+		return angle;
+	}
+
 	void setRotation(double angle) {
 		//There may be an existing rotation. This is the center of the viewport under that rotation:
 		double_c current_center = rotation(center);
 		//move to that location
-		setCenterAndZoomPrivate(current_center, getZoomLevel());
+		setCenterAndZoomPrivate(current_center, get_zoomLevel());
 		//Using the center as the center of rotation makes sense for the user. Here also the new angle is set and the rotation_factor recomputed:
 		center_of_rotation = center;
-		rotation_angle = angle;
-		rotation_factor = exp(angle * 2*pi*I);
+		rotation_angle = normalize_angle(angle);
+		rotation_factor = exp(rotation_angle * 2*pi*I);
 	}
 
-	inline double_c map(int xPos, int yPos) {
+	inline double_c map(uint xPos, uint yPos) {
+		assert(xPos >= 0); assert(xPos <= get_width());
+		assert(yPos >= 0); assert(yPos <= get_height());
 		return get_topleftCorner() + xPos * get_pixelWidth() - yPos * get_pixelHeight()*I;
 	}
 
@@ -240,14 +261,15 @@ public:
 			case 6:
 				return log(c);
 			case 7:
-				return pow(c, partialInflectionPower) + partialInflectionCoord;
+				return pow(c - partialInflectionCoord, partialInflectionPower) + partialInflectionCoord;
 		}
+		assert(false);
 		return 0;
 	}
 
 	double_c inflections(double_c c) {
-		for (int i = get_inflectionCount() - 1; i >= 0; i--) {
-			c = pow(c, get_formula().inflectionPower) + get_inflectionCoords()[i];
+		for (int i = inflectionCount - 1;  i>=0;  i--) {
+			c = pow(c, formula.inflectionPower) + inflectionCoords[i];
 		}
 		return c;
 	}
@@ -276,6 +298,7 @@ public:
 			case 7:
 				return pow(c, partialInflectionPower) + partialInflectionCoord;
 		}
+		assert(false);
 		return 0;
 	}
 
@@ -293,19 +316,20 @@ public:
 
 private:
 	bool updateCenterAndZoom() {
-		return setCenterAndZoomRelative(center, getZoomLevel());
+		return setCenterAndZoomRelative(center, get_zoomLevel());
 	}
 
 public:
-	bool resize(int newOversampling, int newScreenWidth, int newScreenHeight) {
+	bool resize(uint newOversampling, uint newScreenWidth, uint newScreenHeight) {
 		assert(newOversampling > 0);
-		assert(newScreenWidth >= 0);
-		assert(newScreenHeight >= 0);
+		assert(newScreenWidth > 0);
+		assert(newScreenHeight > 0);
 		if (oversampling != newOversampling || screenWidth != newScreenWidth || screenHeight != newScreenHeight) {
 			oversampling = newOversampling;
 			screenWidth = newScreenWidth;
 			screenHeight = newScreenHeight;
-			return updateCenterAndZoom();
+			updateCenterAndZoom(); //this causes recalculation of the pixel width and some other things
+			return true;
 		}
 		return false;
 	}
@@ -323,6 +347,7 @@ public:
 	
 	bool changeFormula(int identifier) {
 		Formula newFormula = getFormulaObject(identifier);
+		assert(newFormula.identifier != -1);
 		if (newFormula.identifier == -1) return false; //The idenfitifer was not found by getFormulaObject
 		if (formula.identifier != newFormula.identifier) {
 			formula_identifier = newFormula.identifier;
@@ -349,10 +374,10 @@ public:
 			Therefore to derive it from the current zoom level, the correction needs to be undone (by multiplying by power).
 		*/
 		double power = pow(2, inflectionCount);
-		inflectionZoomLevel = getZoomLevel()*power;
+		inflectionZoomLevel = get_zoomLevel()*power;
 	}
 
-	bool addInflection(double_c c) {
+	void addInflection(double_c c) {
 		while (inflectionCount >= inflectionCoords.size()) {
 			cout << "inflectionCount: " << inflectionCount << "    inflectionCoords.size(): " << inflectionCoords.size() << endl;
 			inflectionCoords.resize(inflectionCoords.size() * 2 + 1);
@@ -363,21 +388,15 @@ public:
 		setRotation(0);
 		setCenterAndZoomAbsolute(0, inflectionZoomLevel*(1 / pow(2, inflectionCount)));
 		setRotation(oldAngle);
-		return true;
 	}
 
-	bool addInflection(int xPos, int yPos) {
-		if (xPos < 0 || xPos > get_width() || yPos < 0 || yPos > get_height()) {
-			return false;
-		}
+	void addInflection(uint xPos, uint yPos) {
+		assert( ! (xPos < 0 || xPos > get_width() || yPos < 0 || yPos > get_height()) );
 		double_c thisInflectionCoord = pre_transformation(rotation(map(xPos, yPos)));
-		return addInflection(thisInflectionCoord);
+		addInflection(thisInflectionCoord);
 	}
 
-	bool removeInflection(int xPos, int yPos) {
-		if (xPos < 0 || xPos > get_width() || yPos < 0 || yPos > get_height()) {
-			return false;
-		}
+	bool removeInflection() {
 		if (inflectionCount > 0) {
 			inflectionCount--;
 			double_c newCenter = 0;
@@ -396,7 +415,7 @@ public:
 	void printInflections() {
 		cout << "inflectionPower: " << formula.inflectionPower << endl;
 		cout << "inflection coords:" << endl;
-		for (int i = 0; i < inflectionCount; i++) {
+		for (uint i = 0; i < inflectionCount; i++) {
 			printf("i=%d", i); printf(": %f ", real(inflectionCoords[i])); printf("+ %f * I\n", imag(inflectionCoords[i]));
 		}
 	}
@@ -405,11 +424,12 @@ private:
 	bool initialized = false;
 
 public:
-	void reset() {
-		setGradientSpeed(38.0);
-		setGradientOffset(0);
-		setMaxIters(4600);
-		while (removeInflection(0, 0));
+	void reset(FractalParameters& defaultParameters) {
+		setGradientSpeed(defaultParameters.get_gradientSpeed());
+		setGradientOffset(defaultParameters.get_gradientOffset());
+		setMaxIters(defaultParameters.get_maxIters());
+		while (removeInflection());
+		setRotation(0);
 		setCenterAndZoomAbsolute(0, 0);
 		setInflectionZoomLevel();
 	}
@@ -419,32 +439,37 @@ public:
 		if (initialized) return;
 		else initialized = true;
 
-		this->oversampling = 1;
-		this->screenWidth = 1200;
-		this->screenHeight = 800;
-		this->formula = M2;
-		this->formula_identifier = M2.identifier;
-		this->julia = false;
-		this->juliaSeed = -0.75 + 0.1*I;
-		this->inflectionCoords.resize(250); //initial capacity
-		this->inflectionCount = 0;
-		this->inflectionZoomLevel = 0;
-		setCenterAndZoomAbsolute(0, 0);
-		this->gradientColors.resize(4);
+		oversampling = 1;
+		screenWidth = 1200;
+		screenHeight = 800;
+		rotation_angle = 0;
+		rotation_factor = 1;
+		formula = M2;
+		formula_identifier = M2.identifier;
+		julia = false;
+		juliaSeed = -0.75 + 0.1*I;
+		inflectionCoords.resize(250); //initial capacity
+		inflectionCount = 0;
+		inflectionZoomLevel = 0;
+		
+		post_transformation_type = 0;
+		pre_transformation_type = 0;
+		gradientColors.resize(4);
 		gradientColors[0] = rgb(255, 255, 255);
 		gradientColors[1] = rgb(52, 140, 167);
 		gradientColors[2] = rgb(0, 0, 0);
 		gradientColors[3] = rgb(229, 140, 45);
-		this->gradientSpeed = 1;
-		this->gradientOffset = 0.5;
+		gradientSpeed = 1;
+		gradientOffset = 0.5;
+		BI_choice = BI_choices::DEPARTMENT_IT;
+		partialInflectionCoord = 0;
+		partialInflectionPower = 1;
+		center = 0;
+
 		setGradientSpeed(38.0);
 		setGradientOffset(0);
-		this->post_transformation_type = 0;
-		this->pre_transformation_type = 0;
 		setMaxIters(4600);
-		this->rotation_angle = 0;
-		this->rotation_factor = 1;
-		this->BI_choice = BI_choices::DEPARTMENT_IT;
+		setCenterAndZoomPrivate(0, 0);
 	}
 
 	string toJson() {
@@ -470,7 +495,7 @@ public:
 			document.AddMember("center", v, a);
 		}
 
-		document.AddMember("zoomLevel", getZoomLevel(), a);
+		document.AddMember("zoomLevel", get_zoomLevel(), a);
 		document.AddMember("maxIters", maxIters, a);
 
 		{
@@ -489,7 +514,7 @@ public:
 		document.AddMember("inflectionZoomLevel", inflectionZoomLevel, a);
 
 		Value inflectionCoordsValue(kArrayType);
-		for (int i = 0; i < inflectionCount; i++) {
+		for (uint i = 0; i < inflectionCount; i++) {
 			Value v(kObjectType);
 			v.AddMember("Re", real(inflectionCoords[i]), a);
 			v.AddMember("Im", imag(inflectionCoords[i]), a);
@@ -509,6 +534,14 @@ public:
 		}
 		document.AddMember("gradientColors", gradientColorsValue, a);
 
+		document.AddMember("partialInflectionPower", partialInflectionPower, a);
+		{
+			Value v(kObjectType);
+			v.AddMember("Re", real(partialInflectionCoord), a);
+			v.AddMember("Im", imag(partialInflectionCoord), a);
+			document.AddMember("partialInflectionCoord", v, a);
+		}
+
 		//Get string
 		StringBuffer sb;
 		PrettyWriter<StringBuffer> writer(sb);
@@ -527,17 +560,18 @@ public:
 			return false;
 		}
 		else {
+			if(debug) cout << "jsonString is valid JSON" << endl;
 			//read from JSON content:
 			double programVersion_r = PROGRAM_VERSION;
 			if (document.HasMember("programVersion"))
 				programVersion_r = document["programVersion"].GetDouble();
 
-			int oversampling_r = get_oversampling();
+			uint oversampling_r = get_oversampling();
 			if (document.HasMember("oversampling"))
 				oversampling_r = document["oversampling"].GetInt();
 
-			int screenWidth_r = get_screenWidth();
-			int screenHeight_r = get_screenHeight();
+			uint screenWidth_r = get_screenWidth();
+			uint screenHeight_r = get_screenHeight();
 			if (programVersion_r >= 6.0) {
 				if (document.HasMember("screenWidth"))
 					screenWidth_r = document["screenWidth"].GetInt();
@@ -550,20 +584,21 @@ public:
 				if (document.HasMember("height"))
 					screenHeight_r = document["height"].GetInt();
 			}
-			if(debug) cout << "fromJson width height oversampling" << screenWidth_r << " " << screenHeight_r << " " << oversampling_r << " " << endl;
+			if(debug) cout << "fromJson width height oversampling: " << screenWidth_r << " " << screenHeight_r << " " << oversampling_r << " " << endl;
 			resize(oversampling_r, screenWidth_r, screenHeight_r);
 
 			double_c center_r = get_center();
 			if (document.HasMember("center"))
 				center_r = document["center"]["Re"].GetDouble() + document["center"]["Im"].GetDouble() * I;
-			double zoom_r = getZoomLevel();
+			double zoom_r = get_zoomLevel();
 			if (document.HasMember("zoomLevel"))
 				zoom_r = document["zoomLevel"].GetDouble();
 			setCenterAndZoomAbsolute(center_r, zoom_r);
 
-			int maxIters_r = maxIters;
-			if (document.HasMember("maxIters"))
-				document["maxIters"].GetInt();
+			uint maxIters_r = maxIters;
+			if (document.HasMember("maxIters")) {
+				maxIters_r = document["maxIters"].GetInt();
+			}
 			setMaxIters(maxIters_r);
 
 			double_c juliaSeed_r = juliaSeed;
@@ -596,22 +631,34 @@ public:
 				post_transformation_type = post_transformation_type_r;
 				pre_transformation_type = 0;
 			}
+
+			if (document.HasMember("partialInflectionCoord") && document.HasMember("partialInflectionPower")) {
+				double_c partialInflectionCoord_r = document["partialInflectionCoord"]["Re"].GetDouble() + document["partialInflectionCoord"]["Im"].GetDouble() * I;
+				double partialInflectionPower_r = document["partialInflectionPower"].GetDouble();
+				
+				partialInflectionCoord = partialInflectionCoord_r;
+				partialInflectionPower = partialInflectionPower_r;
+			}
 			
-			if (document.HasMember("inflectionCount") && document.HasMember("inflectionCoords")) {
-				int inflectionCount_r = document["inflectionCount"].GetInt();
-				inflectionCount = inflectionCount_r;
+			if (document.HasMember("inflectionCoords")) {
 				Value& inflectionCoordsv = document["inflectionCoords"];
-				for (int i = 0; i < inflectionCount_r; i++) {
+
+				uint inflectionCount_r = inflectionCoordsv.Size();
+				inflectionCount = inflectionCount_r;
+
+				if (inflectionCoords.size() < inflectionCount) {
+					inflectionCoords.resize(inflectionCount);
+				}
+				for (uint i = 0; i < inflectionCount_r; i++) {
 					inflectionCoords[i] = inflectionCoordsv[i]["Re"].GetDouble() + inflectionCoordsv[i]["Im"].GetDouble() * I;
 				}
 			}
 
 			if (document.HasMember("gradientColors")) {
-				//older versions don't have colors in the parameters
 				Value& gradientColorsValue = document["gradientColors"];
-				int size = gradientColorsValue.Size();
+				uint size = gradientColorsValue.Size();
 				gradientColors.resize(size);
-				for (int i=0; i<size; i++) {
+				for (uint i=0; i<size; i++) {
 					gradientColors[i] = rgb(
 						gradientColorsValue[i]["r"].GetInt()
 						,gradientColorsValue[i]["g"].GetInt()
@@ -654,6 +701,12 @@ public:
 			center_of_rotation = center;
 			setRotation(rotation_angle_r);
 		}
+		cout << "finished setting parameters from json string" << endl;
+		if(debug) {
+			cout << "result:" << endl;
+			cout << toJson() << endl;
+		}
+		
 		return true;
 	}
 };

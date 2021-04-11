@@ -13,7 +13,7 @@
 #include <shellapi.h>
 
 //C++ standard library
-#include <iomanip>		//for setfill and setw
+#include <iomanip>		//for setfill and setw, to make framenumbers with leading zeros such as frame000001.png
 #include <chrono>
 #include <thread>
 //#include <random>
@@ -25,6 +25,8 @@
 #include <intrin.h>
 #include <immintrin.h>
 
+//lodepng
+#include "lodepng/lodepng.cpp"
 
 //this program
 #include "common.cpp"
@@ -87,41 +89,40 @@ HWND hJSON; //JSON window
 
 void setWindowSize(int,int);
 
-static TCHAR szWindowClass[] = _T("win32app"); // The main window class name.  
-static TCHAR szTitle[] = _T("ExploreFractals"); // The string that appears in the application's title bar.
-
 static TCHAR TITLE_OPTIONS[] = _T("Options");
 static TCHAR CLASS_OPTIONS[] = _T("Options Window");
 
 static TCHAR TITLE_JSON[] = _T("JSON");
 static TCHAR CLASS_JSON[] = _T("JSON Window");
 
-int createOptionsWindow() {
-	hOptions = CreateWindow(CLASS_OPTIONS, TITLE_OPTIONS, WS_OVERLAPPEDWINDOW, 0, 0, 610, 340, NULL, NULL, hInst, NULL);
+HWND createOptionsWindow(HINSTANCE hInst) {
+	HWND hOptions = CreateWindow(CLASS_OPTIONS, TITLE_OPTIONS, WS_OVERLAPPEDWINDOW, 0, 0, 610, 340, NULL, NULL, hInst, NULL);
 	if (!hOptions) {
 		cout << "error: " << GetLastError() << endl;
 		MessageBox(NULL,
 			_T("Call to CreateWindow failed for hOptions!"),
 			_T("Message"),
 			NULL);
-		return 1;
 	}
-	ShowWindow(hOptions, SW_SHOW);
-	return 0;
+	else {
+		ShowWindow(hOptions, SW_SHOW);
+	}
+	return hOptions;
 }
 
-int createJsonWindow() {
-	hJSON = CreateWindow(CLASS_JSON, TITLE_JSON, WS_OVERLAPPEDWINDOW, 0, 0, 420, 680, NULL, NULL, hInst, NULL);
+HWND createJsonWindow(HINSTANCE hInst) {
+	HWND hJSON = CreateWindow(CLASS_JSON, TITLE_JSON, WS_OVERLAPPEDWINDOW, 0, 0, 420, 680, NULL, NULL, hInst, NULL);
 	if (!hJSON) {
 		cout << "error: " << GetLastError() << endl;
 		MessageBox(NULL,
 			_T("Call to CreateWindow failed for hJson!"),
 			_T("Message"),
 			NULL);
-		return 1;
 	}
-	ShowWindow(hJSON, SW_SHOW);
-	return 0;
+	else {
+		ShowWindow(hJSON, SW_SHOW);
+	}
+	return hJSON;
 }
 
 
@@ -131,6 +132,7 @@ namespace MenuOption {
 		,RESET
 		,TOGGLE_JULIA
 		,VIEW_GUESSED_PIXELS
+		,VIEW_REGULAR_COLORS
 		,WINDOW_OPTIONS
 		,HIGH_POWER
 		,CHANGE_TRANSFORMATION
@@ -150,7 +152,8 @@ namespace MenuOption {
 		,M5
 		,CHECKERS
 		,TRIPLE_MATCHMAKER
-		,TEST_CONTROL
+		,RECURSIVE_FRACTAL
+		,PURE_MORPHINGS
 		//BI options
 		,BI_SHOW
 		,DEPARTMENT_SALES
@@ -174,13 +177,15 @@ void AddMenus(HWND hwnd, bool include_BI) {
 	AppendMenuA(hMenuOther, MF_STRING, MenuOption::CANCEL_RENDER, "&Cancel Render");
 	AppendMenuA(hMenuOther, MF_STRING, MenuOption::CHANGE_TRANSFORMATION, "Change &transformation");
 	AppendMenuA(hMenuOther, MF_STRING, MenuOption::VIEW_GUESSED_PIXELS, "&View guessed pixels");
+	AppendMenuA(hMenuOther, MF_STRING, MenuOption::VIEW_REGULAR_COLORS, "View &Regular colors");
 	AppendMenuA(hMenuOther, MF_SEPARATOR, 0, NULL);
 	AppendMenuA(hMenuOther, MF_STRING, MenuOption::BURNING_SHIP, "&Burning Ship");
-	AppendMenuA(hMenuOther, MF_STRING, MenuOption::M4, "Mandelbrot power 4&");
-	AppendMenuA(hMenuOther, MF_STRING, MenuOption::M5, "Mandelbrot power 5&");
-	AppendMenuA(hMenuOther, MF_STRING, MenuOption::TRIPLE_MATCHMAKER, "Triple Matchmaker&");
-	AppendMenuA(hMenuOther, MF_STRING, MenuOption::TEST_CONTROL, "Test formula 2 (control)&");
-	AppendMenuA(hMenuOther, MF_STRING, MenuOption::HIGH_POWER, "High Power Mandelbrot&");
+	AppendMenuA(hMenuOther, MF_STRING, MenuOption::M4, "Mandelbrot power 4");
+	AppendMenuA(hMenuOther, MF_STRING, MenuOption::M5, "Mandelbrot power 5");
+	AppendMenuA(hMenuOther, MF_STRING, MenuOption::HIGH_POWER, "High Power Mandelbrot");
+	AppendMenuA(hMenuOther, MF_STRING, MenuOption::TRIPLE_MATCHMAKER, "Triple Matchmaker");
+	AppendMenuA(hMenuOther, MF_STRING, MenuOption::RECURSIVE_FRACTAL, "Recursive fractal test");
+	AppendMenuA(hMenuOther, MF_STRING, MenuOption::PURE_MORPHINGS, "Pure Julia morphings");
 	AppendMenuA(hMenuOther, MF_SEPARATOR, 0, NULL);
 	AppendMenuA(hMenuOther, MF_STRING, MenuOption::QUIT, "&Quit");
 
@@ -253,6 +258,35 @@ ReadResult readParametersFile(FractalParameters& S, string fileName) {
 	return ret;
 }
 
+void handleResizeResultGUI(FractalCanvas::ResizeResult res) {
+	if (res.resultType == FractalCanvas::ResizeResultType::OutOfRangeError) {
+		MessageBox(NULL,
+			_T("Changing the resolution failed: width and/or height out of range."),
+			_T("Error"),
+			NULL
+		);
+	}
+	else if (res.resultType == FractalCanvas::ResizeResultType::MemoryError) {
+		if (res.changed) {
+			MessageBox(NULL,
+				_T("Changing the resolution failed: out of memory."),
+				_T("Error"),
+				NULL
+			);
+		}
+		else {
+			MessageBox(NULL,
+				_T("Changing the resolution failed: out of memory. The resolution has not changed."),
+				_T("Error"),
+				NULL
+			);
+		}
+	}
+	if (res.success) {
+		setWindowSize(canvas.S.get_screenWidth(), canvas.S.get_screenHeight());
+	}
+}
+
 /*
 	Wrapper around readParameters-functions for the current GUI
 	This shows error messages and changes the window size.
@@ -261,7 +295,7 @@ ReadResult readParametersFile(FractalParameters& S, string fileName) {
 	If fromFile if true, then input is used as a filename
 	else input is used as a JSON string.
 */
-void readParameters(string& input, bool fromFile) {
+void readParametersGUI(string& input, bool fromFile) {
 	FractalParameters newS = canvas.S;
 	ReadResult res;
 	if (fromFile)
@@ -271,10 +305,9 @@ void readParameters(string& input, bool fromFile) {
 
 	switch (res) {
 		case ReadResult::succes: {
-			bool success = canvas.changeParameters(newS);
-			assert(success);
-			if (success) {
-				setWindowSize(newS.get_screenWidth(), newS.get_screenHeight());
+			FractalCanvas::ResizeResult res = canvas.changeParameters(newS);
+			handleResizeResultGUI(res);
+			if (res.success) {
 				recalculate();
 			}
 			break;
@@ -370,7 +403,7 @@ void FractalCanvas::createNewRenderTemplated(bool headless) {
 		cout << "center: " << real(center) << " + " << imag(center) << " * I" << endl;
 		cout << "xrange: " << S.get_x_range() << endl;
 		cout << "yrange: " << S.get_y_range() << endl;
-		cout << "zoom: " << S.getZoomLevel() << endl;
+		cout << "zoom: " << S.get_zoomLevel() << endl;
 		cout << "Julia: ";
 		if (S.get_julia()) cout << "Yes, with seed " << real(juliaSeed) << " + " << imag(juliaSeed) << " * I" << endl;
 		else cout << "no" << endl;
@@ -411,7 +444,7 @@ void FractalCanvas::createNewRenderTemplated(bool headless) {
 		string elapsedString = to_string(R.getElapsedTime()) + " s";
 		cout << "Elapsed time: " << elapsedString << endl;
 		cout << "computed iterations: " << R.computedIterations << endl;
-		cout << "iterations per second: " << ((long long)(R.computedIterations / R.getElapsedTime()) / 1000000.0) << " M" << endl;
+		cout << "iterations per second: " << ((uint64)(R.computedIterations / R.getElapsedTime()) / 1000000.0) << " M" << endl;
 		cout << "used threads: " << R.usedThreads / 2 << endl; // divide by 2 because each thread is counted when created and when destroyed by addToThreadcount
 		cout << "guessedPixelCount: " << R.guessedPixelCount << " / " << width * height << " = " << (double)R.guessedPixelCount / (width*height) << endl;
 		cout << "calculatedPixelCount" << R.calculatedPixelCount << " / " << width * height << " = " << (double)R.calculatedPixelCount / (width*height) << endl;
@@ -470,8 +503,8 @@ void FractalCanvas::createNewRender(bool headless) {
 			}
 			break;
 		}
-		case PROCEDURE_TEST_CONTROL: {
-			createNewRenderTemplated<PROCEDURE_TEST_CONTROL, true, false, false>(headless);
+		case PROCEDURE_RECURSIVE_FRACTAL: {
+			createNewRenderTemplated<PROCEDURE_RECURSIVE_FRACTAL, true, false, false>(headless);
 			break;
 		}
 		case PROCEDURE_CHECKERS : {
@@ -485,6 +518,11 @@ void FractalCanvas::createNewRender(bool headless) {
 		procedureRenderCase(PROCEDURE_TRIPLE_MATCHMAKER)
 		case PROCEDURE_BI: {
 			createNewRenderTemplated<PROCEDURE_BI, true, false, false>(headless);
+			break;
+		}
+		case PROCEDURE_PURE_MORPHINGS: {
+			createNewRenderTemplated<PROCEDURE_PURE_MORPHINGS, true, false, false>(headless);
+			break;
 		}
 	}
 }
@@ -516,23 +554,86 @@ void setWindowSize(int windowWidth, int windowHeight) {
 	InvalidateRect(hWndMain, NULL, TRUE);
 }
 
-void saveImage(string filename) {
-	int screenWidth = canvas.S.get_screenWidth();
-	int screenHeight = canvas.S.get_screenHeight();
-	int width = canvas.S.get_width();
-	int height = canvas.S.get_height();
+void saveImage(string filename, bool cleanup = true) {
+	uint screenWidth = canvas.S.get_screenWidth();
+	uint screenHeight = canvas.S.get_screenHeight();
 
-	PICTDESC pictdesc = {};
-	pictdesc.cbSizeofstruct = sizeof(pictdesc);
-	pictdesc.picType = PICTYPE_BITMAP;
-	pictdesc.bmp.hbitmap = bitmapManager.screenBMP;
+	/*
+		This loop performs conversion.
 
-	CComPtr<IPicture> picture;
-	OleCreatePictureIndirect(&pictdesc, __uuidof(IPicture), FALSE, (LPVOID*)&picture);
-	//save to file
-	CComPtr<IPictureDisp> disp;
-	picture->QueryInterface(&disp);
-	OleSavePictureFile(disp, CComBSTR(filename.c_str()));
+		PNG requires RGBA-values in big-endian order. The colors in this program are ARGB stored in little-endian order. Lodepng interprets the data correctly when delivered as ABGR (the reserve order of RGBA) because of the endianness difference.
+		 I convert the colors to ABGR in the original array to reduce memory usage. That means that after saving the PNG, the colors need to be reverted to their original values.
+
+		 LodePNG also expects the colors to be ordered from bottom to top. In this program the colors are ordered top to bottom. That means the order of the horizontal lines of pixels should be reversed.
+	*/
+	
+	uint upToMiddle = screenHeight / 2;
+	if (screenHeight % 2 == 1) upToMiddle += 1;
+
+	for (uint y=0; y < upToMiddle; y++) {
+		for (uint x=0; x < screenWidth; x++) {
+
+			uint pixelIndexHigh = canvas.pixelIndex_of_pixelXY(x, y);
+			uint pixelIndexLow = canvas.pixelIndex_of_pixelXY(x, screenHeight - y - 1);
+			ARGB& high = canvas.ptPixels[pixelIndexHigh];
+			ARGB& low = canvas.ptPixels[pixelIndexLow];
+		
+			ARGB low_copy = low;
+
+			ARGB r,g,b;
+			r = (high & 0x00ff0000);
+			g = (high & 0x0000ff00);
+			b = (high & 0x000000ff);
+
+			//ARGB to ABGR. This comes down to swapping red and blue.
+			low = (
+				0xff000000 //always use full opacity (no transparency)
+				| r >> 16
+				| g
+				| b << 16
+			);
+
+			r = (low_copy & 0x00ff0000);
+			g = (low_copy & 0x0000ff00);
+			b = (low_copy & 0x000000ff);
+
+			high = (
+				0xff000000 //always use full opacity (no transparency)
+				| r >> 16
+				| g
+				| b << 16
+			);
+		}
+	}
+	
+	uint8* out;
+	size_t outsize;
+	unsigned errorcode = lodepng_encode32(
+		&out, &outsize				//will contain the PNG data
+		,(uint8*)canvas.ptPixels		//image data to encode
+		,screenWidth, screenHeight	//width and height
+	);
+	if (errorcode != 0) {
+		cout << "error " << errorcode << " occurred while encoding PNG" << endl;
+		assert(false);
+	}
+	else {
+		ofstream outfile;
+		outfile.open(filename, ios::binary);
+		if (outfile.is_open()) {
+			outfile.write((char*)out, outsize);
+			outfile.close();
+		}
+		else {
+			cout << "error while opening file " << filename << endl;
+			assert(false);
+		}
+	}
+	free(out);
+
+	if (cleanup) {
+		canvas.createNewBitmapRender(true, false);
+	}
 }
 
 string getDate() {
@@ -550,8 +651,133 @@ string getDate() {
 int fps = 60;
 double secondsPerInflection = 3;
 double secondsPerZoom = 0.6666666666666;
+int skipframes = 0;
+bool save_as_efp = false;
 
-void animation() {
+
+
+void animation(
+	string path
+	,bool save_only_parameters
+	,int skipframes
+	,int framesPerInflection
+	,int framesPerZoom
+	,FractalParameters& S
+) {
+	cout << "rendering animation with" << endl;
+	cout << fps << " fps" << endl;
+	cout << framesPerInflection << " frames per inflection" << endl;
+	cout << framesPerZoom << " frames per zoom" << endl;
+
+	auto makeFrame = [&](int frame, bool recalculate) {
+		if (frame <= skipframes) {
+			cout << "skipping frame " << frame << endl;
+			return;
+		}
+
+		std::stringstream num;
+		num << std::setfill('0') << std::setw(6); //numbering 000001, 000002, 000003, ...
+		num << frame;
+
+		if (save_only_parameters) {
+			string filename = "frame" + num.str() + ".efp";
+			writeParameters(canvas.S, write_directory + filename);
+			return;
+		}
+
+		if (recalculate)
+			canvas.createNewRender(true); //the whole render takes place in this thread so after this the render is done
+		else
+			canvas.createNewBitmapRender(true, false);
+
+		string filename = "frame" + num.str() + ".png";
+		cout << "saving image " << filename << endl;
+		saveImage(path + filename, false);
+	};
+
+
+	S.pre_transformation_type = 7; //broken inflection power transformation
+	vector<double_c> inflections = S.get_inflectionCoords();
+	int inflectionCount = S.get_inflectionCount();
+	while(S.removeInflection()); //reset to 0 inflections
+	double_c originalCenter = S.get_center();
+	S.setCenterAndZoomAbsolute(0, 0); //start the animation unzoomed and centered
+	S.partialInflectionPower = 1;
+	S.partialInflectionCoord = 0;
+
+	double inflectionPowerStepsize = 1.0 / (framesPerInflection - 1);
+	int frame = 1;
+
+	makeFrame(frame++, true);		
+
+	double_c centerTarget = inflectionCount > 0 ? inflections[0] : originalCenter;
+	double_c currentCenter = S.get_center();
+	double_c diff = centerTarget - currentCenter;
+
+	//gradually move the center towards the next inflection location
+	if (centerTarget != 0.0 + 0.0*I) {
+		for (int i=1; i<=framesPerInflection; i++) {
+
+			S.setCenter( currentCenter + diff * ((1.0 / framesPerInflection) * i) );
+
+			makeFrame(frame++, true);
+		}
+	}
+	S.setCenter(centerTarget);
+
+	double currentZoom = S.get_zoomLevel();
+	double targetZoom = S.get_inflectionZoomLevel() * (1 / pow(2, S.get_inflectionCount()));
+	double zoomDiff = targetZoom - currentZoom;
+	double zoomStepsize = 1.0 / framesPerZoom;
+
+	//zoom to the inflection zoom level
+	if (zoomStepsize > 0.001) {
+		for (int i=1; i <= framesPerZoom * zoomDiff; i++) {
+
+			S.setZoomLevel( currentZoom + zoomStepsize * i );
+
+			makeFrame(frame++, true);
+		}
+	}
+
+	for (int inflection=0; inflection < inflectionCount; inflection++) {
+
+		S.partialInflectionPower = 1;
+		S.partialInflectionCoord = 0;
+
+		double_c thisInflectionCoord = inflections[inflection];
+		
+		double_c currentCenter = S.get_center();
+		double_c diff = thisInflectionCoord - currentCenter;
+
+		S.partialInflectionCoord = thisInflectionCoord;
+
+		//gradually apply the next inflection by letting the inflection power go from 1 to 2, and meanwhile also gradually move to the next inflection location.
+		for (int i=0; i<framesPerInflection; i++) {
+			S.setCenterAndZoomAbsolute(0, (
+				S.get_inflectionZoomLevel()
+				* (1 / pow(2, S.get_inflectionCount()))
+				* (1 / S.partialInflectionPower)
+			));
+			S.setCenter( currentCenter + diff * ((1.0 / (framesPerInflection-1)) * i) );
+
+			makeFrame(frame++, true);
+
+			S.partialInflectionPower += inflectionPowerStepsize;
+		}
+		S.addInflection(S.partialInflectionCoord);
+	}
+
+	//repeat the last frame
+	for (int i=0; i<framesPerInflection; i++)
+		makeFrame(frame++, false);
+
+	S.pre_transformation_type = 0;
+}
+
+//old animation style:
+/*
+void animation2() {
 	FractalParameters& S = canvas.S;
 
 	string path = write_directory;
@@ -608,7 +834,7 @@ void animation() {
 			}
 		}
 
-		double currentZoom = S.getZoomLevel();
+		double currentZoom = S.get_zoomLevel();
 		double targetZoom = S.get_inflectionZoomLevel() * (1 / pow(2, S.get_inflectionCount()));
 		double zoomDiff = targetZoom - currentZoom;
 		double zoomStepsize = 1.0 / framesPerZoom;
@@ -647,6 +873,7 @@ void animation() {
 
 	S.pre_transformation_type = 0;
 }
+*/
 
 //identifiers start at 300:
 const int mainWndStatusBar = 300;
@@ -688,9 +915,10 @@ LRESULT CALLBACK MainWndProc(HWND hWnd, UINT message, WPARAM wParam, LPARAM lPar
 			case MenuOption::M4: { formula_identifier = PROCEDURE_M4; break; }
 			case MenuOption::M5: { formula_identifier = PROCEDURE_M5; break; }
 			case MenuOption::TRIPLE_MATCHMAKER: { formula_identifier = PROCEDURE_TRIPLE_MATCHMAKER; break; }
-			case MenuOption::TEST_CONTROL:  { formula_identifier = PROCEDURE_TEST_CONTROL; break; }
+			case MenuOption::RECURSIVE_FRACTAL:  { formula_identifier = PROCEDURE_RECURSIVE_FRACTAL; break; }
 			case MenuOption::HIGH_POWER:  { formula_identifier = PROCEDURE_HIGH_POWER; break; }
 			case MenuOption::BI_SHOW: { formula_identifier = PROCEDURE_BI; break; }
+			case MenuOption::PURE_MORPHINGS: { formula_identifier = PROCEDURE_PURE_MORPHINGS; break; }
 			default:
 				formula_identifier = -1;
 		}
@@ -743,7 +971,7 @@ LRESULT CALLBACK MainWndProc(HWND hWnd, UINT message, WPARAM wParam, LPARAM lPar
 					"inflectionZoomLevel": 1.6
 				}
 				)";
-				readParameters(fixedParams, false);
+				readParametersGUI(fixedParams, false);
 				recalculate();
 			}
 			else if (fractalTypeChange) {
@@ -756,7 +984,7 @@ LRESULT CALLBACK MainWndProc(HWND hWnd, UINT message, WPARAM wParam, LPARAM lPar
 		switch (menuOption) {
 			//Other options:
 			case MenuOption::RESET: {
-				canvas.S.reset();
+				canvas.S.reset(defaultParameters);
 				recalculate();
 				break;
 			}
@@ -772,21 +1000,25 @@ LRESULT CALLBACK MainWndProc(HWND hWnd, UINT message, WPARAM wParam, LPARAM lPar
 				break;
 			}
 			case MenuOption::WINDOW_OPTIONS: {
-				//SendMessage(hOptions, WM_DESTROY, NULL, NULL); //destroy currently active options window? doesn't work
-				createOptionsWindow();
+				DestroyWindow(hOptions);
+				hOptions = createOptionsWindow(hInst);
 				break;
 			}
 			case MenuOption::WINDOW_JSON: {
-				createJsonWindow();
+				hJSON = createJsonWindow(hInst);
 				break;
 			}
 			case MenuOption::VIEW_GUESSED_PIXELS: {
 				refreshBitmapThread(true);
 				break;
 			}
+			case MenuOption::VIEW_REGULAR_COLORS: {
+				refreshBitmapThread(false);
+				break;
+			}
 			case MenuOption::SAVE_IMAGE: {
 				string filename = getDate() + " " + canvas.S.get_formula().name;
-				if (BrowseFile(hWnd, FALSE, "Save bitmap", "Bitmap\0*.bmp\0\0", filename)) {
+				if (BrowseFile(hWnd, FALSE, "Save PNG", "Portable Network Graphics (PNG)\0*.png\0\0", filename)) {
 					saveImage(filename);
 				}
 				break;
@@ -800,16 +1032,16 @@ LRESULT CALLBACK MainWndProc(HWND hWnd, UINT message, WPARAM wParam, LPARAM lPar
 			}
 			case MenuOption::SAVE_BOTH: {
 				string filename = getDate() + " " + canvas.S.get_formula().name;
-				if (BrowseFile(hWnd, FALSE, "Save parameters", "Parameters\0*.efp\0\0", filename)) {
+				if (BrowseFile(hWnd, FALSE, "Save parameters and image", "Parameters\0*.efp\0\0", filename)) {
 					writeParameters(canvas.S, filename);
-					saveImage(filename + ".bmp");
+					saveImage(filename + ".png");
 				}
 				break;
 			}
 			case MenuOption::LOAD_PARAMETERS: {
 				string filename = getDate() + " " + canvas.S.get_formula().name;
 				if (BrowseFile(hWnd, TRUE, "Load parameters", "Parameters\0*.efp\0\0", filename)) {
-					readParameters(filename, true);
+					readParametersGUI(filename, true);
 				}
 				break;
 			}
@@ -870,14 +1102,14 @@ LRESULT CALLBACK MainWndProc(HWND hWnd, UINT message, WPARAM wParam, LPARAM lPar
 		POINT point = { GET_X_LPARAM(lParam), GET_Y_LPARAM(lParam) };
 		int xPos = point.x * oversampling;
 		int yPos = point.y * oversampling;
-		if (xPos < 0 || xPos > width || yPos < 0 || yPos > height) {
+		if (xPos < 0 || xPos >= width || yPos < 0 || yPos >= height) {
 			return 0;
 		}
 
 		IterData thisPixel = canvas.getIterData(xPos, yPos);
 		double_c thisComplexNumber = canvas.S.map_with_transformations(xPos, yPos);
 		string complexNumber = to_string(real(thisComplexNumber)) + " + " + to_string(imag(thisComplexNumber)) + "* I";
-		string iterationData = "iters: " + to_string(thisPixel.iterationCount);
+		string iterationData = "iters: " + to_string(thisPixel.iterationCount());
 		SendMessageA(statusBar, SB_SETTEXTA, 2, (LPARAM)(complexNumber.c_str()));
 		SendMessageA(statusBar, SB_SETTEXTA, 3, (LPARAM)(iterationData.c_str()));
 
@@ -928,9 +1160,9 @@ LRESULT CALLBACK MainWndProc(HWND hWnd, UINT message, WPARAM wParam, LPARAM lPar
 			real(new_topleftcorner) + (margin_right_new_size / margin_right) * 0.5
 			+ (imag(new_topleftcorner) - (margin_top_new_size / margin_top) * 0.5) * I;
 
-		canvas.S.setCenterAndZoomRelative(new_center, canvas.S.getZoomLevel() + zooms);
+		canvas.S.setCenterAndZoomRelative(new_center, canvas.S.get_zoomLevel() + zooms);
 
-
+		//timerstart
 		//generate preview bitmap
 		BITMAP Bitmap;
 		HDC screenHDC = CreateCompatibleDC(NULL);
@@ -945,18 +1177,19 @@ LRESULT CALLBACK MainWndProc(HWND hWnd, UINT message, WPARAM wParam, LPARAM lPar
 			StretchBlt(screenHDC, xPos - xPos / 4, yPos - yPos / 4, screenWidth / 4, screenHeight / 4, screenHDC, 0, 0, screenWidth, screenHeight, SRCCOPY);
 		}
 		DeleteDC(screenHDC);
+		//timerend(resize_bitmap)
 
 		recalculate();
 		break;
 	}
 	case WM_LBUTTONUP: {
 		//create inflection
-		int oversampling = canvas.S.get_oversampling();
-		int xPos = GET_X_LPARAM(lParam) * oversampling;
-		int yPos = GET_Y_LPARAM(lParam) * oversampling;
-		bool added = canvas.S.addInflection(xPos, yPos);
+		uint oversampling = canvas.S.get_oversampling();
+		uint xPos = GET_X_LPARAM(lParam) * oversampling;
+		uint yPos = GET_Y_LPARAM(lParam) * oversampling;
 
-		if (added) {
+		if ( ! (xPos < 0 || xPos > canvas.S.get_width() || yPos < 0 || yPos > canvas.S.get_height())) {
+			canvas.S.addInflection(xPos, yPos);
 			canvas.S.printInflections();
 			recalculate();
 		}
@@ -967,9 +1200,9 @@ LRESULT CALLBACK MainWndProc(HWND hWnd, UINT message, WPARAM wParam, LPARAM lPar
 		int oversampling = canvas.S.get_oversampling();
 		int xPos = GET_X_LPARAM(lParam) * oversampling;
 		int yPos = GET_Y_LPARAM(lParam) * oversampling;
-		bool removed = canvas.S.removeInflection(xPos, yPos);
 
-		if (removed) {
+		if ( ! (xPos < 0 || xPos > canvas.S.get_width() || yPos < 0 || yPos > canvas.S.get_height())) {
+			canvas.S.removeInflection();
 			canvas.S.printInflections();
 			recalculate();
 		}
@@ -1091,7 +1324,6 @@ LRESULT CALLBACK OptionsProc(HWND hOptions, UINT message, WPARAM wParam, LPARAM 
 	}
 	case CUSTOM_REFRESH: {
 		//set newOversampling
-		assert(canvas.S.get_oversampling() == canvas.S.get_height() / canvas.S.get_screenHeight());
 
 		SendMessage(optionsElt(getOverSampleIdentifier()), BM_SETCHECK, BST_CHECKED, 0);
 
@@ -1103,7 +1335,7 @@ LRESULT CALLBACK OptionsProc(HWND hOptions, UINT message, WPARAM wParam, LPARAM 
 		SetDlgItemTextA(hOptions, optionWidth, to_string(canvas.S.get_screenWidth()).c_str());
 
 		//Set zoom level
-		SetDlgItemTextA(hOptions, optionZoomLevel, to_string(canvas.S.getZoomLevel()).c_str());
+		SetDlgItemTextA(hOptions, optionZoomLevel, to_string(canvas.S.get_zoomLevel()).c_str());
 
 		//Set max iters
 		SetDlgItemTextA(hOptions, optionMaxIters, to_string(canvas.S.get_maxIters()).c_str());
@@ -1181,10 +1413,9 @@ LRESULT CALLBACK OptionsProc(HWND hOptions, UINT message, WPARAM wParam, LPARAM 
 			else if (IsDlgButtonChecked(hOptions, optionsRadioAA_12) == BST_CHECKED) newOversampling = 12;
 			else if (IsDlgButtonChecked(hOptions, optionsRadioAA_16) == BST_CHECKED) newOversampling = 16;
 
-			bool success;
-			recalcNeeded |= canvas.resize(newOversampling, newScreenWidth, newScreenHeight, success);
-			if (success)
-				setWindowSize(newScreenWidth, newScreenHeight);
+			FractalCanvas::ResizeResult res = canvas.resize(newOversampling, newScreenWidth, newScreenHeight);
+			handleResizeResultGUI(res);
+			recalcNeeded |= res.changed;
 
 			if (recalcNeeded) {
 				recalculate();
@@ -1263,7 +1494,7 @@ LRESULT CALLBACK JsonProc(HWND hJson, UINT message, WPARAM wParam, LPARAM lParam
 			char* aJson = (char*)calloc(jsonCharsLimit, sizeof(char));
 			GetDlgItemTextA(hJson, JsonText, aJson, jsonCharsLimit);
 			string json(aJson);
-			readParameters(json, false);
+			readParametersGUI(json, false);
 			free(aJson);
 		}
 		if (wParam == JsonOk || wParam == JsonCancel) {
@@ -1354,6 +1585,14 @@ int CALLBACK WinMain(
 				secondsPerZoom = stod(commands[i+1]);
 			}
 		}
+		else if (c == "--skipframes" ) {
+			if (i+1 < argc) {
+				skipframes = stoi(commands[i+1]);
+			}
+		}
+		else if (c == "--efp") {
+			save_as_efp = true;
+		}
 		else if (c == "--image") {
 			render_image = true;
 			if (!override_interactive) {
@@ -1393,15 +1632,17 @@ int CALLBACK WinMain(
 			cout << (R"(
 all available parameters:
     -p name.efp     use the file name.efp as initial parameters. default: default.efp
+	-o directory    use the directory as output directory (example: C:\folder)
     --width         override the width parameter
     --height        override the height parameter
     --oversampling  override the oversampling parameter
     --image         render the initial parameter file to an image
     --animation     render an animation of the initial parameters
+	--efp           save the parameters instead of rendering to an image (can be used to convert old parameter files or to store parameter files for every frame in an animation)
     --fps number    the number of frames per second (integer)
     --spi number    the number of seconds per inflection (floating point)
     --spz number    the number of seconds per zoom (floating point)
-    -o directory    use the directory as output directory for animation frames (example: C:\folder)
+    --skipframes    number of frames to skip (for example to continue an unfinished animation render)
     -i              do not close the program after rendering an image or animation to continue interactive use
     --help or -h    show this text
 
@@ -1436,13 +1677,12 @@ examples:
 	bool osUsesXSAVE_XRSTORE = cpuInfo[2] & (1 << 27) || false;
 	bool cpuAVXSuport = cpuInfo[2] & (1 << 28) || false;
 	if (osUsesXSAVE_XRSTORE && cpuAVXSuport) {
-		unsigned long long xcrFeatureMask = _xgetbv(_XCR_XFEATURE_ENABLED_MASK);
+		uint64 xcrFeatureMask = _xgetbv(_XCR_XFEATURE_ENABLED_MASK);
 		using_avx = (xcrFeatureMask & 0x6) == 0x6;
 	}
 	cout << "using AVX: " << (using_avx ? "Yes" : "No") << endl;
 
 
-	defaultParameters.initialize();
 	readParametersFile(defaultParameters, parameterfile);
 	{
 		int& o = override_oversampling, w = override_width, h = override_height;
@@ -1459,20 +1699,29 @@ examples:
 	canvas = *new FractalCanvas(defaultParameters, NUMBER_OF_THREADS, bitmapManager);
 
 
-	if (render_image) {
+	if (save_as_efp && ! render_animation) {
+		writeParameters(canvas.S, write_directory + parameterfile);
+	}
+	else if (render_image) {
 		cout << "rendering image" << endl;
 		canvas.createNewRender(true);
-		saveImage(write_directory + parameterfile + ".bmp");
+		saveImage(write_directory + parameterfile + ".png");
 	}
+
 	if (render_animation) {
 		cout << "rendering animation" << endl;
-		animation();
+		int framesPerInflection = (int)(fps * secondsPerInflection);
+		int framesPerZoom = (int)(fps * secondsPerZoom);
+		animation(write_directory, save_as_efp, skipframes, framesPerInflection, framesPerZoom, canvas.S);
 	}
+
 	if (!interactive) {
 		return 0;
 	}
 
 	
+	static TCHAR szWindowClass[] = _T("win32app"); // The main window class name.  
+	static TCHAR szTitle[] = _T("ExploreFractals"); // The string that appears in the application's title bar.
 
 	HWND hWnd;
 	WNDCLASSEX wcex;
