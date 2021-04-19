@@ -54,7 +54,25 @@ ExploreFractals -p name.efp --width 1920 --height 1080 --oversampling 2
 
 ### Compiling the code
 
-The program was compiled with visual studio 2017. The only file that needs to be compiled is ExploreFractals.cpp. Other resources such as intrin.h for usage of AVX instructions are available on my computer but I don't know where they come from. Therefore I don't know what is needed exactly to compile this code. I don't have enough time to investigate that. One of my plans is to compile the program with GCC in order to find out what exactly is required to compile. I also suspect there may be some visual studio-specific code, as I've read that visual studio has some slight deviations from the c++ standard. I want to get rid of any incompatibilities eventually when I have enough time.
+The only file that needs to be compiled is ExploreFractals.cpp.
+
+To compile with GCC:
+
+> g++ ExploreFractals.cpp -std=c++17 -s -static -m64 -O2 -ffast-math -lgdi32 -lcomdlg32 -D NDEBUG -o ExploreFractals.exe
+
+More information about compiling with GCC: https://github.com/DinkydauSet/ExploreFractals/wiki/Compiling-with-GCC
+
+I use visual studio 2017 for development. The program can be compiled with visual studio. I don't remember how I got the project set up so I can't help with that.
+
+The code here on github includes some libraries:
+
+| name | use |
+| -- | -- |
+| rapidjson | to save and load parameter files in JSON format |
+| lodepng | to save PNG images |
+| gcem | for constexpr math functions |
+
+All of the libraries mention that they allow to be redistributed. I do so to make it easier to compile the code.
 
 ### Changelog
 
