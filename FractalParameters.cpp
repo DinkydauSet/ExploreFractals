@@ -10,10 +10,10 @@
 
 #define get_trick(name) get_ ## name
 #define readonly(type, name) \
- private: type name; \
- public: inline type get_trick(name)() {\
-        return name;\
- }
+private: type name; \
+public: inline const type& get_trick(name)() {\
+	return name;\
+}
 
  namespace BI_choices {
 	enum {
@@ -26,7 +26,9 @@
 
 class FractalParameters {
 
-	public: FractalParameters() {
+	public: FractalParameters()
+	: procedure(M2) //because Procedure doesn't have a default constructor
+	{
 		initialize();
 	}
 
@@ -47,12 +49,12 @@ class FractalParameters {
 	readonly(double, pixelHeight)
 	readonly(uint, maxIters)
 	readonly(bool, julia)
-	readonly(Formula, formula)
-	readonly(int, formula_identifier)
-		
-	public: vector<double_c> inflectionCoords;//the locations of created Julia morphings
-	public: inline vector<double_c> get_inflectionCoords() {return inflectionCoords;} 
-
+	
+	private: Procedure procedure;
+	readonly(int, procedure_identifier)
+	public: Procedure get_procedure() { return getProcedureObject(procedure_identifier); }
+	
+	readonly(vector<double_c>, inflectionCoords);//the locations of created Julia morphings
 	readonly(uint, inflectionCount)
 	readonly(double, inflectionZoomLevel) //reset to this zoom level upon creating a new inflection
 
@@ -61,7 +63,7 @@ class FractalParameters {
 	readonly(double, gradientSpeedFactor) //stored for efficiency
 	readonly(uint, gradientOffsetTerm) //stored for efficiency
 
-	vector<ARGB> gradientColors;
+	readonly(vector<ARGB>, gradientColors)
 
 	readonly(double, rotation_angle) //angle between 0 and 1. 0 means 0 degrees. 0.25 means 90 degrees etc.
 	readonly(double_c, center_of_rotation)
@@ -269,7 +271,7 @@ public:
 
 	double_c inflections(double_c c) {
 		for (int i = inflectionCount - 1;  i>=0;  i--) {
-			c = pow(c, formula.inflectionPower) + inflectionCoords[i];
+			c = pow(c, procedure.inflectionPower) + inflectionCoords[i];
 		}
 		return c;
 	}
@@ -345,13 +347,13 @@ public:
 		}
 	}
 	
-	bool changeFormula(int identifier) {
-		Formula newFormula = getFormulaObject(identifier);
-		assert(newFormula.identifier != -1);
-		if (newFormula.identifier == -1) return false; //The idenfitifer was not found by getFormulaObject
-		if (formula.identifier != newFormula.identifier) {
-			formula_identifier = newFormula.identifier;
-			formula = newFormula;
+	bool changeProcedure(int id) {
+		Procedure newProcedure = getProcedureObject(id);
+		assert(newProcedure.id != -1);
+		if (newProcedure.id == -1) return false; //The idenfitifer was not found by getProcedureObject
+		if (procedure.id != newProcedure.id) {
+			procedure_identifier = newProcedure.id;
+			procedure = newProcedure;
 			return true;
 		}
 		return false;
@@ -413,7 +415,7 @@ public:
 	}
 
 	void printInflections() {
-		cout << "inflectionPower: " << formula.inflectionPower << endl;
+		cout << "inflectionPower: " << procedure.inflectionPower << endl;
 		cout << "inflection coords:" << endl;
 		for (uint i = 0; i < inflectionCount; i++) {
 			printf("i=%d", i); printf(": %f ", real(inflectionCoords[i])); printf("+ %f * I\n", imag(inflectionCoords[i]));
@@ -444,8 +446,8 @@ public:
 		screenHeight = 800;
 		rotation_angle = 0;
 		rotation_factor = 1;
-		formula = M2;
-		formula_identifier = M2.identifier;
+		procedure = M2;
+		procedure_identifier = M2.id;
 		julia = false;
 		juliaSeed = -0.75 + 0.1*I;
 		inflectionCoords.resize(250); //initial capacity
@@ -506,7 +508,7 @@ public:
 		}
 
 		document.AddMember("julia", julia, a);
-		document.AddMember("formula_identifier", formula.identifier, a);
+		document.AddMember("procedure_identifier", procedure_identifier, a);
 		document.AddMember("post_transformation_type", post_transformation_type, a);	
 		document.AddMember("pre_transformation_type", pre_transformation_type, a);
 		document.AddMember("inflectionCount", inflectionCount, a);
@@ -610,10 +612,12 @@ public:
 			juliaSeed = juliaSeed_r;
 			julia = julia_r;
 
-			int formula_identifier_r = formula.identifier;
-			if (document.HasMember("formula_identifier"))
-				formula_identifier_r = document["formula_identifier"].GetInt();
-			changeFormula(formula_identifier_r);
+			int procedure_identifier_r = procedure.id;
+			if (document.HasMember("procedure_identifier"))
+				procedure_identifier_r = document["procedure_identifier"].GetInt();
+			else if (document.HasMember("formula_identifier")) //versions below 8
+				procedure_identifier_r = document["formula_identifier"].GetInt();
+			changeProcedure(procedure_identifier_r);
 
 			int post_transformation_type_r = post_transformation_type;
 			int pre_transformation_type_r = pre_transformation_type;

@@ -4,87 +4,118 @@
 //standard library
 #include <algorithm>
 
+//Intrinsics, for using avx instructions
+#include <intrin.h>
+#include <immintrin.h>
+
+//gcem
+#include "gcem/gcem.hpp"	 //for constexpr math functions
+
 //this program
 #include "common.cpp"
 #include "FractalCanvas.cpp"
 
 
-const bool CALCULATED = false;
-const bool GUESSED = true;
-
-//constants for Triple Matchmaker:
-const double sqrt3 = sqrt(3);
-const double a = 2.2;
-const double b = 1.4;
-const double d = 1.1;
+constexpr bool CALCULATED = false;
+constexpr bool GUESSED = true;
 
 
-template <int formula_identifier>
-double_c escapeTimeFormula(double_c z, double_c c) { assert(false); return 0; };  //default implementation
+/*
+	Escape radius squared for Mandelbrot power n is: pow(2, 1/(n-1))
+	Squared that's pow(2, 2/(n-1)). Using the squared esacape radius is more efficient for calculations.
 
-template <>
-double_c escapeTimeFormula<PROCEDURE_M3>(double_c z, double_c c) {
-	return pow(z, 3) + c;
-}
+	cardioidRadius is the radius of the largest circle that fits within the cardioid. Checking if a pixel lies within that circle saves having to iterate. This matters especially for high power Mandelbrot sets, which are nearly a circle.
+*/
+template <int power>
+struct MandelbrotFormula {
+	static constexpr double escapeRadiusSq = gcem::pow(2, 2.0 / power);
+	static constexpr double cardioidRadius =
+		gcem::pow(
+			1.0/power
+			, 1.0/(power-1)
+		)
+		-  gcem::pow(
+			1.0/power
+			, power/(power-1.0)
+		);
+	static bool withinCardioidRadius(double_c c) {
+		return abs(c) < cardioidRadius;
+	}
+	static inline double_c apply(double_c z, double_c c) {
+		return pow(z, power) + c;
+	}
+};
 
-template <>
-double_c escapeTimeFormula<PROCEDURE_M4>(double_c z, double_c c) {
-	return pow(z, 4) + c;
-}
+template <int procedure_identifier>
+struct EscapeTimeFormula {
+	static constexpr double escapeRadiusSq = ([]()
+	{
+		constexpr Procedure procedure = getProcedureObject(procedure_identifier);
 
-template <>
-double_c escapeTimeFormula<PROCEDURE_M5>(double_c z, double_c c) {
-	return pow(z, 5) + c;
-}
+		if (procedure.procedureClass == ProcedureClass::Mandelbrot)
+		{
+			return MandelbrotFormula<procedure.inflectionPower>::escapeRadiusSq;
+		}
+		else if (procedure.id == BURNING_SHIP.id)
+		{
+			return 4.0;
+		}
+		else {
+			assert(false);
+			return 4.0;
+		}
+	})();
 
-template <>
-double_c escapeTimeFormula<PROCEDURE_BURNING_SHIP>(double_c z, double_c c) {
-	return pow((abs(real(z)) + abs(imag(z))*I), 2) + c;
-}
+	static inline double_c apply(double_c z, double_c c)
+	{
+		constexpr Procedure procedure = getProcedureObject(procedure_identifier);
 
-template <>
-double_c escapeTimeFormula<PROCEDURE_TRIPLE_MATCHMAKER>(double_c z, double_c c) {
-	return (z + a / sqrt3) / (b*(pow(z, 3) - sqrt3 * a*pow(z, 2) + c * z + a * c / sqrt3)) + d;
-}
+		if (procedure.procedureClass == ProcedureClass::Mandelbrot)
+		{
+			return MandelbrotFormula<procedure.inflectionPower>::apply(z,c);
+		}
+		else if (procedure.id == BURNING_SHIP.id)
+		{
+			return pow((abs(real(z)) + abs(imag(z))*I), 2) + c;
+		}
+		else {
+			assert(false);
+			return 0;
+		}
+	};
+};
 
-template <>
-double_c escapeTimeFormula<PROCEDURE_HIGH_POWER>(double_c z, double_c c) {
-	return pow(z, 33554432) + c;
-}
 
 /*
 This class "Render" is literally a datastructure, but I think of it as a task. It models a task performed on a FractalCanvas.
 
 Render holds a reference to the FractalCanvas that created it to have access to the information stored in the FractalCanvas. Most importantly access to the pointers is required to change the iteration- and pixeldata ...which means care is required so that a Render doesn't use the pointers of the FractalCanvas during a resize etc.
 
-The idea behind the template is that the compiler will optimize everything away that is not used, given specific values for the parameters. For example, in isSameHorizontalLine it says "if (guessing)". If guessing is false, it says "if (false)", so the whole function definition can be recuced to "return false", which will lead to optimizations wherever the function is used as well, because the return value is known at compile time. Also for example in calcPoint there are many ifs 
+The idea behind the template is that the compiler will optimize everything away that is not used, given specific values for the parameters. For example, in isSameHorizontalLine it says "if (procedure.guessable)". If procedure.guessable is false, it says "if (false)", so the whole function definition can be recuced to "return false", which will lead to optimizations wherever the function is used as well, because the return value is known at compile time. Also for example in calcPoint there are many ifs 
 */
-template <int formula_identifier, bool guessing, bool use_avx, bool julia>
+template <int procedure_identifier, bool use_avx, bool julia>
 class Render {
 public:
-	uint renderID;
+	const uint renderID;
 	FractalCanvas& canvas;
+	static constexpr Procedure procedure = getProcedureObject(procedure_identifier); //this value is known at compile time
 
-	//a copy of some widely used members of canvas.S
-	uint width;
-	uint height;
-	uint screenWidth;
-	uint screenHeight;
-	uint oversampling;
-	double_c juliaSeed;
-	uint maxIters;
-	vector<double_c>& inflectionCoords;
-	uint inflectionCount;
-	int inflectionPower;
+	//some widely used members of canvas.S
+	const vector<double_c>& inflectionCoords;
+	const uint width;
+	const uint height;
+	const uint screenWidth;
+	const uint screenHeight;
+	const uint oversampling;
+	const double_c juliaSeed;
+	const uint maxIters;
+	const uint inflectionCount;
 	
-	//other 
-	Formula formula;
-	double escapeRadius;
-	
+	//other
 	uint usedThreads; //counts the total number of threads created
 	uint threadCount;
-	chrono::time_point<chrono::steady_clock> startTime;
-	chrono::time_point<chrono::steady_clock> endTime;
+	chrono::time_point<chrono::high_resolution_clock> startTime;
+	chrono::time_point<chrono::high_resolution_clock> endTime;
 	bool isFinished;
 	uint64 guessedPixelCount;
 	uint64 calculatedPixelCount;
@@ -92,11 +123,19 @@ public:
 	uint64 computedIterations;
 
 	Render(FractalCanvas& canvasContext, int renderID)
-	: canvas(canvasContext), inflectionCoords(canvasContext.S.inflectionCoords)
+	: canvas(canvasContext)
+	, renderID(renderID)
+	, inflectionCoords(canvas.S.get_inflectionCoords())
+	, width(canvas.S.get_width())
+	, height(canvas.S.get_height())
+	, screenWidth(canvas.S.get_screenWidth())
+	, screenHeight(canvas.S.get_screenHeight())
+	, oversampling(canvas.S.get_oversampling())
+	, juliaSeed(canvas.S.juliaSeed)
+	, maxIters(canvas.S.get_maxIters())
+	, inflectionCount(canvas.S.get_inflectionCount())
 	{
 		if(debug) cout << "creating render " << renderID << endl;
-		this->renderID = renderID;
-		
 		threadCount = 0;
 		usedThreads = 0;
 		pixelGroupings = 0;
@@ -104,18 +143,6 @@ public:
 		calculatedPixelCount = 0;
 		computedIterations = 0;
 		isFinished = false;
-
-		formula = canvas.S.get_formula();
-		juliaSeed = canvas.S.juliaSeed;
-		width = canvas.S.get_width();
-		height = canvas.S.get_height();
-		screenWidth = canvas.S.get_screenWidth();
-		screenHeight = canvas.S.get_screenHeight();
-		oversampling = canvas.S.get_oversampling();
-		maxIters = canvas.S.get_maxIters();
-		escapeRadius = canvas.S.get_formula().escapeRadius;
-		inflectionCount = canvas.S.get_inflectionCount();
-		inflectionPower = canvas.S.get_formula().inflectionPower;
 	}
 
 	~Render(void) {
@@ -157,7 +184,7 @@ public:
 
 	double_c inflections(double_c c) {
 		for (int i = inflectionCount - 1;  i>=0;  i--) {
-			c = pow(c, inflectionPower) + inflectionCoords[i];
+			c = pow(c, procedure.inflectionPower) + inflectionCoords[i];
 		}
 		return c;
 	}
@@ -189,7 +216,7 @@ public:
 
 		uint iterationCount = 0;
 
-		if (formula_identifier == PROCEDURE_M2) {
+		if (procedure_identifier == M2.id) {
 			double_c c = map_with_transformations_m2(x, y);
 
 			double cr;
@@ -207,29 +234,27 @@ public:
 				zisqr = zi * zi;
 			}
 			else {
-				double zx;
-				double zy;
-				zx = real(c);
-				zy = imag(c);
-				double zx2 = zx;
-				double zy2 = zy;
+				double zx = real(c);
+				double zy = imag(c);
 
 				zx -= 0.25; zy *= zy;
 				double q = zx * zx + zy;
 				if (4 * q*(q + zx) < zy) {
+					//point is inside the cardioid
 					canvas.setPixel(x, y, maxIters, CALCULATED, true);
 					return maxIters;
 				}
-				zx = zx2;
-				zy = zy2;
+				zx = real(c);
+				zy = imag(c);
 				zx++;
 				if (zx * zx + zy * zy < 0.0625) {
+					//point is inside the circle
 					canvas.setPixel(x, y, maxIters, CALCULATED, true);
 					return maxIters;
 				}
 
-				cr = zx2;
-				ci = zy2;
+				cr = real(c);
+				ci = imag(c);
 				zr = 0;
 				zi = 0;
 				zrsqr = 0;
@@ -246,13 +271,15 @@ public:
 			}
 		}
 		if (
-			formula_identifier == PROCEDURE_M3
-			|| formula_identifier == PROCEDURE_M4
-			|| formula_identifier == PROCEDURE_M5
-			|| formula_identifier == PROCEDURE_HIGH_POWER
-			|| formula_identifier == PROCEDURE_BURNING_SHIP
+			procedure_identifier == M3.id
+			|| procedure_identifier == M4.id
+			|| procedure_identifier == M5.id
+			|| procedure_identifier == M512.id
+			|| procedure_identifier == HIGH_POWER.id
+			|| procedure_identifier == BURNING_SHIP.id
 		) {
 			//use a general escape time fractal loop
+			constexpr double escapeRadiusSq = EscapeTimeFormula<procedure_identifier>::escapeRadiusSq;
 			double_c c;
 			double_c z;
 			if (julia) {
@@ -262,13 +289,29 @@ public:
 			else {
 				c = map_with_transformations(x, y);
 				z = 0;
+				if (	
+					procedure_identifier == M3.id
+					|| procedure_identifier == M4.id
+					|| procedure_identifier == M5.id
+					|| procedure_identifier == M512.id
+					|| procedure_identifier == HIGH_POWER.id
+				) {
+					//This is a Mandelbrot formula. It can be checked whether c is within the largest circle within the cardioid:
+					constexpr int power = procedure.inflectionPower;
+
+					if (MandelbrotFormula<power>::withinCardioidRadius(c))
+					{
+						canvas.setPixel(x, y, maxIters, CALCULATED, true);
+						return maxIters;
+					}
+				}
 			}
-			while (real(z)*real(z) + imag(z)*imag(z) < escapeRadius && iterationCount < maxIters) {
-				z = escapeTimeFormula<formula_identifier>(z, c);
+			while (real(z)*real(z) + imag(z)*imag(z) < escapeRadiusSq && iterationCount < maxIters) {
+				z = EscapeTimeFormula<procedure_identifier>::apply(z, c);
 				iterationCount++;
 			}
 		}
-		if (formula_identifier == PROCEDURE_CHECKERS) {
+		if (procedure_identifier == CHECKERS.id) {
 			double_c c = map_with_transformations_m2(x, y);
 			//create checkerboard tiles
 			double resolution = pi; //tile size, pi goes well with the natural log transformation
@@ -305,7 +348,13 @@ public:
 			if (result) iterationCount = 503; //these choices are arbitrary and just to distinguish tiles. I chose primes because I hope that it makes periodic problems less likely when the number of gradient colors divides one of these values, but I'm not sure if it really helps.
 			else iterationCount = 53;
 		}
-		if (formula_identifier == PROCEDURE_TRIPLE_MATCHMAKER) {
+		if (procedure_identifier == TRIPLE_MATCHMAKER.id) {
+			//constants for Triple Matchmaker:
+			constexpr double sqrt3 = gcem::sqrt(3);
+			constexpr double a = 2.2;
+			constexpr double b = 1.4;
+			constexpr double d = 1.1;
+
 			double_c c;
 			double_c z;
 			double summ = 0;
@@ -318,14 +367,14 @@ public:
 				z = 0;
 			}
 			for (uint k = 2; k < maxIters; k++) {
-				z = escapeTimeFormula<PROCEDURE_TRIPLE_MATCHMAKER>(z, c);
+				z = (z + a / sqrt3) / (b*(pow(z, 3) - sqrt3 * a*pow(z, 2) + c * z + a * c / sqrt3)) + d;
 				summ += abs(z);
 			}
 			iterationCount = (int)(summ);
 			canvas.setPixel(x, y, iterationCount, CALCULATED, false);
 			return iterationCount;
 		}
-		if (formula_identifier == PROCEDURE_RECURSIVE_FRACTAL) {
+		if (procedure_identifier == RECURSIVE_FRACTAL.id) {
 			//normal Mandelbrot power 2 iteration, after which a measure of how hard the pixel escaped and the angle of c are used as coordinate in a julia set. This is a fractal of fractals. The output of one fractal procecure is used as the input for the second.
 			double_c c = map_with_transformations_m2(x, y);
 
@@ -412,7 +461,7 @@ public:
 				iterationCount += iterationCountOld;
 			}
 		}
-		if (formula_identifier == PROCEDURE_PURE_MORPHINGS) {
+		if (procedure_identifier == PURE_MORPHINGS.id) {
 			double_c c = 
 				canvas.S.pre_transformation(
 				canvas.S.rotation(
@@ -451,7 +500,7 @@ public:
 			canvas.setPixel(x, y, iterationCount, CALCULATED, false);
 			return iterationCount;
 		}
-		if (formula_identifier == PROCEDURE_BI) {
+		if (procedure_identifier == BI.id) {
 			double_c c = map_with_transformations_m2(x, y);
 			
 			auto insideBox = [](box& box, double_c c) {
@@ -550,6 +599,211 @@ public:
 		uint x;
 		uint y;
 	};
+
+#pragma GCC push_options
+#pragma GCC target ("avx")
+	inline bool calcPointVectorAVX_M2(vector<point>& points, uint fromPoint, uint toPoint) {
+		//AVX for Mandelbrot power 2
+		//AVX is used. Length 4 arrays and vectors are constructed to iterate 4 pixels at once. That means 4 x-values, 4 y-values, 4 c-values etc.
+		int thisIter = -1;
+		bool isSame = true;
+
+		uint x[4] = {
+			points[fromPoint].x
+			,points[fromPoint + 1].x
+			,points[fromPoint + 2].x
+			,points[fromPoint + 3].x
+		};
+		uint y[4]{
+			points[fromPoint].y
+			,points[fromPoint + 1].y
+			,points[fromPoint + 2].y
+			,points[fromPoint + 3].y
+		};
+		double_c c[4] = {
+			map_with_transformations_m2(x[0], y[0])
+			,map_with_transformations_m2(x[1], y[1])
+			,map_with_transformations_m2(x[2], y[2])
+			,map_with_transformations_m2(x[3], y[3])
+		};
+		uint iterationCounts[4] = { 0, 0, 0, 0 };
+		uint nextPixel = fromPoint + 4;
+
+		__m256d cr, ci, zr, zi, zrsqr, zisqr; //256-bit vectors of 4 doubles each
+		//access to doubles individually through array (p for pointer) interpretation
+		double* crp = (double*)&cr;
+		double* cip = (double*)&ci;
+		double* zrp = (double*)&zr;
+		double* zip = (double*)&zi;
+		double* zrsqrp = (double*)&zrsqr;
+		double* zisqrp = (double*)&zisqr;
+		//double versions of the vector variables, used to iterate pixels individually:
+		double crd, cid, zrd, zid, zrsqrd, zisqrd;
+
+		__m256d bailout_v = _mm256_set1_pd(4.0);
+		__m256d zisqr_plus_zrsqr_v = _mm256_setzero_pd();
+		__m256d pixel_has_escaped_v;
+		bool* pixel_has_escaped_p = (bool*)&pixel_has_escaped_v;
+		__m256d all_true = _mm256_cmp_pd(_mm256_setzero_pd(), _mm256_setzero_pd(), _CMP_EQ_OS);
+
+		double julia_r;
+		double julia_i;
+
+		//note that the order here is different from the arrays x, y and c. Apparently _mm256_set_pd fills the vector in opposite order?
+		if (julia) {
+			julia_r = real(juliaSeed);
+			julia_i = imag(juliaSeed);
+
+			cr = _mm256_set1_pd(julia_r);
+			ci = _mm256_set1_pd(julia_i);
+			zr = _mm256_set_pd(real(c[3]), real(c[2]), real(c[1]), real(c[0]));
+			zi = _mm256_set_pd(imag(c[3]), imag(c[2]), imag(c[1]), imag(c[0]));
+			zrsqr = _mm256_mul_pd(zr, zr);
+			zisqr = _mm256_mul_pd(zi, zi);
+		}
+		else {
+			cr = _mm256_set_pd(real(c[3]), real(c[2]), real(c[1]), real(c[0]));
+			ci = _mm256_set_pd(imag(c[3]), imag(c[2]), imag(c[1]), imag(c[0]));
+			zr = _mm256_setzero_pd();
+			zi = _mm256_setzero_pd();
+			zrsqr = _mm256_setzero_pd();
+			zisqr = _mm256_setzero_pd();
+		}
+
+		bool continue_avx_iteration = true;
+
+		while (continue_avx_iteration) {
+			zi = _mm256_mul_pd(zr, zi);
+			zi = _mm256_add_pd(zi, zi);
+			zi = _mm256_add_pd(zi, ci);
+			zr = _mm256_add_pd(_mm256_sub_pd(zrsqr, zisqr), cr);
+			zrsqr = _mm256_mul_pd(zr, zr);
+			zisqr = _mm256_mul_pd(zi, zi);
+			zisqr_plus_zrsqr_v = _mm256_add_pd(zrsqr, zisqr);
+
+			for (int m = 0; m < 4; m++) {
+				iterationCounts[m]++;
+			}
+
+			pixel_has_escaped_v = _mm256_xor_pd(
+				_mm256_cmp_pd(zisqr_plus_zrsqr_v, bailout_v, _CMP_LE_OQ)
+				, all_true //xor with this is required to interpret comparison with NaN as true. When there's a NaN I consider that pixel escaped.
+			);
+
+			if (
+				pixel_has_escaped_p[0]
+				|| pixel_has_escaped_p[8] //Indices are multiplied by 8 because the bool values in pixel_has_escaped_p are stored as doubles which are 8 bytes long:
+				|| pixel_has_escaped_p[16]
+				|| pixel_has_escaped_p[24]
+				|| iterationCounts[0] >= maxIters
+				|| iterationCounts[1] >= maxIters
+				|| iterationCounts[2] >= maxIters
+				|| iterationCounts[3] >= maxIters
+				) {
+				//when here, one of the pixels has escaped or exceeded the max number of iterations
+
+				for (int k = 0; k < 4; k++) { //for each pixel in the AVX vector
+					if (pixel_has_escaped_p[8 * k] || iterationCounts[k] >= maxIters) { //this pixel is done
+						if (nextPixel < toPoint) {
+							//There is work left to do. The finished pixel needs to be replaced by a new one.
+
+							setPixelAndThisIter(x[k], y[k], iterationCounts[k], CALCULATED, iterationCounts[k] == maxIters); //it is done so we set it
+							iterationCounts[k] = -1; //to mark pixel k in the vectors as done/invalid
+
+							bool pixelIsValid = false;
+
+							while (!pixelIsValid && nextPixel < toPoint) {
+								//take new pixel:
+								x[k] = points[nextPixel].x;
+								y[k] = points[nextPixel].y;
+								c[k] = map_with_transformations_m2(x[k], y[k]);
+								nextPixel++;
+
+								//verify that this pixel is valid:
+								if (julia) {
+									pixelIsValid = true;
+
+									iterationCounts[k] = 0;
+									crp[k] = julia_r;
+									cip[k] = julia_i;
+									zrp[k] = real(c[k]);
+									zip[k] = imag(c[k]);
+									zrsqrp[k] = zrp[k] * zrp[k];
+									zisqrp[k] = zip[k] * zip[k];
+								}
+								else {
+									double zx = real(c[k]);
+									double zy = imag(c[k]);
+									double zx_backup = zx;
+									double zy_backup = zy;
+
+									zx++;
+									if (zx * zx + zy * zy < 0.0625) {
+										setPixelAndThisIter(x[k], y[k], maxIters, CALCULATED, true);
+									}
+									else {
+										zx = zx_backup;
+										zy = zy_backup;
+										zx -= 0.25;
+										zy *= zy;
+										double q = zx * zx + zy;
+										if (4 * q*(q + zx) < zy) {
+											setPixelAndThisIter(x[k], y[k], maxIters, CALCULATED, true);
+										}
+										else {
+											pixelIsValid = true;
+
+											iterationCounts[k] = 0;
+											crp[k] = zx_backup;
+											cip[k] = zy_backup;
+											zrp[k] = 0;
+											zip[k] = 0;
+											zrsqrp[k] = 0;
+											zisqrp[k] = 0;
+										}
+									}
+
+								}
+							}
+							if (!pixelIsValid) {
+								//searching for a valid new pixel resulted in reaching the end of the vector. There are not enough pixels to fill the AVX vector.
+								continue_avx_iteration = false;
+							}
+						}
+						else {
+							continue_avx_iteration = false;
+						}
+					}
+				}
+			}
+		}
+
+		//Finish iterating the remaining 3 or fewer pixels without AVX:
+		for (int k = 0; k < 4; k++) {
+			uint iterationCount = iterationCounts[k];
+			if (iterationCount != -1) {
+				crd = crp[k];
+				cid = cip[k];
+				zrd = zrp[k];
+				zid = zip[k];
+				zrsqrd = zrsqrp[k];
+				zisqrd = zisqrp[k];
+				while (zrsqrd + zisqrd <= 4.0 && iterationCount < maxIters) {
+					zid = zrd * zid;
+					zid += zid;
+					zid += cid;
+					zrd = zrsqrd - zisqrd + crd;
+					zrsqrd = zrd * zrd;
+					zisqrd = zid * zid;
+					iterationCount++;
+				}
+				setPixelAndThisIter(x[k], y[k], iterationCount, CALCULATED, iterationCount == maxIters);
+			}
+		}
+		return isSame;
+	}
+#pragma GCC pop_options
+
 	/*
 		including fromPoint; not including toPoint
 	*/
@@ -567,7 +821,7 @@ public:
 		bool isSame = true;
 		int thisIter = -1;
 
-		if (!use_avx || formula.identifier != PROCEDURE_M2 || pointCount < 4) {
+		if (!use_avx || procedure_identifier != M2.id || pointCount < 4) {
 			uint thisX = points[fromPoint].x;
 			uint thisY = points[fromPoint].y;
 			uint thisIter = calcPoint(thisX, thisY);
@@ -580,203 +834,11 @@ public:
 					isSame = false;
 			}
 		}
-		else { //AVX only for Mandelbrot power 2
-			//AVX is used. Length 4 arrays and vectors are constructed to iterate 4 pixels at once. That means 4 x-values, 4 y-values, 4 c-values etc.
-			uint x[4] = {
-				points[fromPoint].x
-				,points[fromPoint + 1].x
-				,points[fromPoint + 2].x
-				,points[fromPoint + 3].x
-			};
-			uint y[4]{
-				points[fromPoint].y
-				,points[fromPoint + 1].y
-				,points[fromPoint + 2].y
-				,points[fromPoint + 3].y
-			};
-			double_c c[4] = {
-				map_with_transformations_m2(x[0], y[0])
-				,map_with_transformations_m2(x[1], y[1])
-				,map_with_transformations_m2(x[2], y[2])
-				,map_with_transformations_m2(x[3], y[3])
-			};
-			uint iterationCounts[4] = { 0, 0, 0, 0 };
-			uint nextPixel = fromPoint + 4;
-
-			__m256d cr, ci, zr, zi, zrsqr, zisqr; //256-bit vectors of 4 doubles each
-			//access to doubles individually through array (p for pointer) interpretation
-			double* crp = (double*)&cr;
-			double* cip = (double*)&ci;
-			double* zrp = (double*)&zr;
-			double* zip = (double*)&zi;
-			double* zrsqrp = (double*)&zrsqr;
-			double* zisqrp = (double*)&zisqr;
-			//double versions of the vector variables, used to iterate pixels individually:
-			double crd, cid, zrd, zid, zrsqrd, zisqrd;
-
-			__m256d bailout_v = _mm256_set1_pd(4.0);
-			__m256d zisqr_plus_zrsqr_v = _mm256_setzero_pd();
-			__m256d pixel_has_escaped_v;
-			bool* pixel_has_escaped_p = (bool*)&pixel_has_escaped_v;
-			__m256d all_true = _mm256_cmp_pd(_mm256_setzero_pd(), _mm256_setzero_pd(), _CMP_EQ_OS);
-
-			double julia_r;
-			double julia_i;
-
-			//note that the order here is different from the arrays x, y and c. Apparently _mm256_set_pd fills the vector in opposite order?
-			if (julia) {
-				julia_r = real(juliaSeed);
-				julia_i = imag(juliaSeed);
-
-				cr = _mm256_set1_pd(julia_r);
-				ci = _mm256_set1_pd(julia_i);
-				zr = _mm256_set_pd(real(c[3]), real(c[2]), real(c[1]), real(c[0]));
-				zi = _mm256_set_pd(imag(c[3]), imag(c[2]), imag(c[1]), imag(c[0]));
-				zrsqr = _mm256_mul_pd(zr, zr);
-				zisqr = _mm256_mul_pd(zi, zi);
-			}
-			else {
-				cr = _mm256_set_pd(real(c[3]), real(c[2]), real(c[1]), real(c[0]));
-				ci = _mm256_set_pd(imag(c[3]), imag(c[2]), imag(c[1]), imag(c[0]));
-				zr = _mm256_setzero_pd();
-				zi = _mm256_setzero_pd();
-				zrsqr = _mm256_setzero_pd();
-				zisqr = _mm256_setzero_pd();
-			}
-
-			bool use_avx_iteration = true;
-
-			while (use_avx_iteration) {
-				zi = _mm256_mul_pd(zr, zi);
-				zi = _mm256_add_pd(zi, zi);
-				zi = _mm256_add_pd(zi, ci);
-				zr = _mm256_add_pd(_mm256_sub_pd(zrsqr, zisqr), cr);
-				zrsqr = _mm256_mul_pd(zr, zr);
-				zisqr = _mm256_mul_pd(zi, zi);
-				zisqr_plus_zrsqr_v = _mm256_add_pd(zrsqr, zisqr);
-
-				for (int m = 0; m < 4; m++) {
-					iterationCounts[m]++;
-				}
-
-				pixel_has_escaped_v = _mm256_xor_pd(
-					_mm256_cmp_pd(zisqr_plus_zrsqr_v, bailout_v, _CMP_LE_OQ)
-					, all_true //xor with this is required to interpret comparison with NaN as true. When there's a NaN I consider that pixel escaped.
-				);
-
-				if (
-					pixel_has_escaped_p[0]
-					|| pixel_has_escaped_p[8] //Indices are multiplied by 8 because the bool values in pixel_has_escaped_p are stored as doubles which are 8 bytes long:
-					|| pixel_has_escaped_p[16]
-					|| pixel_has_escaped_p[24]
-					|| iterationCounts[0] >= maxIters
-					|| iterationCounts[1] >= maxIters
-					|| iterationCounts[2] >= maxIters
-					|| iterationCounts[3] >= maxIters
-					) {
-					//when here, one of the pixels has escaped or exceeded the max number of iterations
-
-					for (int k = 0; k < 4; k++) { //for each pixel in the AVX vector
-						if (pixel_has_escaped_p[8 * k] || iterationCounts[k] >= maxIters) { //this pixel is done
-							if (nextPixel < toPoint) {
-								//There is work left to do. The finished pixel needs to be replaced by a new one.
-
-								setPixelAndThisIter(x[k], y[k], iterationCounts[k], CALCULATED, iterationCounts[k] == maxIters); //it is done so we set it
-								iterationCounts[k] = -1; //to mark pixel k in the vectors as done/invalid
-
-								bool pixelIsValid = false;
-
-								while (!pixelIsValid && nextPixel < toPoint) {
-									//take new pixel:
-									x[k] = points[nextPixel].x;
-									y[k] = points[nextPixel].y;
-									c[k] = map_with_transformations_m2(x[k], y[k]);
-									nextPixel++;
-
-									//verify that this pixel is valid:
-									if (julia) {
-										pixelIsValid = true;
-
-										iterationCounts[k] = 0;
-										crp[k] = julia_r;
-										cip[k] = julia_i;
-										zrp[k] = real(c[k]);
-										zip[k] = imag(c[k]);
-										zrsqrp[k] = zrp[k] * zrp[k];
-										zisqrp[k] = zip[k] * zip[k];
-									}
-									else {
-										double zx = real(c[k]);
-										double zy = imag(c[k]);
-										double zx_backup = zx;
-										double zy_backup = zy;
-
-										zx++;
-										if (zx * zx + zy * zy < 0.0625) {
-											setPixelAndThisIter(x[k], y[k], maxIters, CALCULATED, true);
-										}
-										else {
-											zx = zx_backup;
-											zy = zy_backup;
-											zx -= 0.25;
-											zy *= zy;
-											double q = zx * zx + zy;
-											if (4 * q*(q + zx) < zy) {
-												setPixelAndThisIter(x[k], y[k], maxIters, CALCULATED, true);
-											}
-											else {
-												pixelIsValid = true;
-
-												iterationCounts[k] = 0;
-												crp[k] = zx_backup;
-												cip[k] = zy_backup;
-												zrp[k] = 0;
-												zip[k] = 0;
-												zrsqrp[k] = 0;
-												zisqrp[k] = 0;
-											}
-										}
-
-									}
-								}
-								if (!pixelIsValid) {
-									//searching for a valid new pixel resulted in reaching the end of the vector. There are not enough pixels to fill the AVX vector.
-									use_avx_iteration = false;
-								}
-							}
-							else {
-								use_avx_iteration = false;
-							}
-						}
-					}
-				}
-			}
-
-			//Finish iterating the remaining 3 or fewer pixels without AVX:
-			for (int k = 0; k < 4; k++) {
-				uint iterationCount = iterationCounts[k];
-				if (iterationCount != -1) {
-					crd = crp[k];
-					cid = cip[k];
-					zrd = zrp[k];
-					zid = zip[k];
-					zrsqrd = zrsqrp[k];
-					zisqrd = zisqrp[k];
-					while (zrsqrd + zisqrd <= 4.0 && iterationCount < maxIters) {
-						zid = zrd * zid;
-						zid += zid;
-						zid += cid;
-						zrd = zrsqrd - zisqrd + crd;
-						zrsqrd = zrd * zrd;
-						zisqrd = zid * zid;
-						iterationCount++;
-					}
-					setPixelAndThisIter(x[k], y[k], iterationCount, CALCULATED, iterationCount == maxIters);
-				}
-			}
+		else { 
+			isSame = calcPointVectorAVX_M2(points, fromPoint, toPoint);
 		}
 		calculatedPixelCount += pointCount;
-		return isSame && formula.isGuessable;
+		return isSame && procedure.guessable;
 	}
 
 	/*
@@ -784,7 +846,7 @@ public:
 	*/
 	bool isSameHorizontalLine(uint xFrom, uint xTo, uint height) {
 		assert(xTo >= xFrom);
-		if (guessing) {
+		if (procedure.guessable) {
 			bool same = true;
 			uint thisIter = canvas.getIterationcount(xFrom, height);
 			for (uint x = xFrom + 1; x < xTo; x++) {
@@ -805,7 +867,7 @@ public:
 	*/
 	bool isSameVerticalLine(uint yFrom, uint yTo, uint width) {
 		assert(yTo >= yFrom);
-		if (guessing) {
+		if (procedure.guessable) {
 			bool same = true;
 			uint thisIter = canvas.getIterationcount(width, yFrom);
 			for (uint y = yFrom + 1; y < yTo; y++) {
@@ -883,7 +945,7 @@ public:
 
 		bool pass_on_bitmap_render_responsibility = bitmap_render_responsibility && !stop_creating_threads;
 
-		if (guessing) {
+		if (procedure.guessable) {
 			if (sameRight && sameLeft && sameTop && sameBottom && iterRight == iterTop && iterTop == iterLeft && iterLeft == iterBottom && iterRight != 1 && iterRight != 0) {
 				//The complete boundary of the tile has the same iterationCount. Fill with that same value:
 				bool isInMinibrot = canvas.getIterData(xmin, ymin).inMinibrot();

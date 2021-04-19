@@ -1,29 +1,20 @@
-
 //Visual Studio requires this for no clear reason
 #include "stdafx.h"
 
-//WinApi
-#include <Windowsx.h>
-#include <windows.h>
-#include <CommCtrl.h>
-#include <commdlg.h>
-#include <ocidl.h>
-#include <olectl.h>
-#include <atlbase.h>
-#include <shellapi.h>
-
 //C++ standard library
-#include <iomanip>		//for setfill and setw, to make framenumbers with leading zeros such as frame000001.png
+#include <iomanip>	//for setfill and setw, to make framenumbers with leading zeros such as frame000001.png
 #include <chrono>
 #include <thread>
 //#include <random>
 #include <fstream>
 #include <regex>
-#include <codecvt>		//to convert utf16 to utf8
+#include <codecvt>	//to convert utf16 to utf8
+#include <locale>
 
-//Intrinsics, for using avx instructions
-#include <intrin.h>
-#include <immintrin.h>
+//WinApi
+#include <Windowsx.h> //what is this necessary for?
+#include <windows.h>
+#include <shellapi.h>
 
 //lodepng
 #include "lodepng/lodepng.cpp"
@@ -150,6 +141,7 @@ namespace MenuOption {
 		,M3
 		,M4
 		,M5
+		,M512
 		,CHECKERS
 		,TRIPLE_MATCHMAKER
 		,RECURSIVE_FRACTAL
@@ -182,6 +174,7 @@ void AddMenus(HWND hwnd, bool include_BI) {
 	AppendMenuA(hMenuOther, MF_STRING, MenuOption::BURNING_SHIP, "&Burning Ship");
 	AppendMenuA(hMenuOther, MF_STRING, MenuOption::M4, "Mandelbrot power 4");
 	AppendMenuA(hMenuOther, MF_STRING, MenuOption::M5, "Mandelbrot power 5");
+	AppendMenuA(hMenuOther, MF_STRING, MenuOption::M512, "Mandelbrot power 512");
 	AppendMenuA(hMenuOther, MF_STRING, MenuOption::HIGH_POWER, "High Power Mandelbrot");
 	AppendMenuA(hMenuOther, MF_STRING, MenuOption::TRIPLE_MATCHMAKER, "Triple Matchmaker");
 	AppendMenuA(hMenuOther, MF_STRING, MenuOption::RECURSIVE_FRACTAL, "Recursive fractal test");
@@ -347,18 +340,18 @@ bool writeParameters(FractalParameters& S, string fileName) {
 }
 
 
-template <int formula_identifier, bool guessing, bool use_avx, bool julia>
-void refreshDuringRender(Render<formula_identifier, guessing, use_avx, julia>& R, FractalCanvas& canvasContext, int renderID) {
+template <int procedure_identifier, bool use_avx, bool julia>
+void refreshDuringRender(Render<procedure_identifier, use_avx, julia>& R, FractalCanvas& canvasContext, int renderID) {
 	this_thread::sleep_for(chrono::milliseconds(70));
-	if(debug) cout << "refreshDuringRender " << renderID << " awakened" << endl;
+	//if(debug) cout << "refreshDuringRender " << renderID << " awakened" << endl;
 	int screenWidth = canvasContext.S.get_screenWidth();
 	int screenHeight = canvasContext.S.get_screenHeight();
 
 	while (canvasContext.lastRenderID == renderID && canvas.activeRenders != 0) {
-		if(debug) cout << "refreshDuringRender " << renderID << " waiting for lock drawingBitmap" << endl;
+		//if(debug) cout << "refreshDuringRender " << renderID << " waiting for lock drawingBitmap" << endl;
 		{
 			lock_guard<mutex> guard(drawingBitmap);
-			if(debug) cout << "refreshDuringRender " << renderID << " has lock drawingBitmap" << endl;
+			//if(debug) cout << "refreshDuringRender " << renderID << " has lock drawingBitmap" << endl;
 			if (canvasContext.lastRenderID == renderID) { //to prevent drawing after the render is already finished, because a drawing is already made immediately after the render finishes
 				canvasContext.bitmapManager->draw();
 				double percentage = (double)(R.guessedPixelCount + R.calculatedPixelCount) / (R.width * R.height) * 100;
@@ -369,16 +362,16 @@ void refreshDuringRender(Render<formula_identifier, guessing, use_avx, julia>& R
 				firstPaint = false;
 			}
 			else {
-				if(debug) cout << "refreshDuringRender " << renderID << " doesn't draw because the render was cancelled" << endl;
+				//if(debug) cout << "refreshDuringRender " << renderID << " doesn't draw because the render was cancelled" << endl;
 			}
 		}
-		if(debug) cout << "refreshDuringRender " << renderID << " released lock drawingBitmap" << endl;
+		//if(debug) cout << "refreshDuringRender " << renderID << " released lock drawingBitmap" << endl;
 		this_thread::sleep_for(std::chrono::milliseconds(100));
 	}
-	if(debug) cout << "refreshDuringRender thread " << renderID << " ended" << endl;
+	//if(debug) cout << "refreshDuringRender thread " << renderID << " ended" << endl;
 }
 
-template <int formula_identifier, bool guessing, bool use_avx, bool julia>
+template <int procedure_identifier, bool use_avx, bool julia>
 void FractalCanvas::createNewRenderTemplated(bool headless) {
 	int renderID;
 	{
@@ -387,7 +380,7 @@ void FractalCanvas::createNewRenderTemplated(bool headless) {
 		activeRenders++;
 	}
 
-	Render<formula_identifier, guessing, use_avx, julia> R(*this, renderID);
+	Render<procedure_identifier, use_avx, julia> R(*this, renderID);
 
 	int width = S.get_width();
 	int height = S.get_height();
@@ -397,7 +390,7 @@ void FractalCanvas::createNewRenderTemplated(bool headless) {
 		double_c juliaSeed = S.juliaSeed;
 		cout << "-----New Render-----" << endl;
 		cout << "renderID: " << renderID << endl;
-		cout << "Formula: " << S.get_formula().name << endl;
+		cout << "Procedure: " << S.get_procedure().name() << endl;
 		cout << "width: " << width << endl;
 		cout << "height: " << height << endl;
 		cout << "center: " << real(center) << " + " << imag(center) << " * I" << endl;
@@ -417,7 +410,7 @@ void FractalCanvas::createNewRenderTemplated(bool headless) {
 		}
 	}
 	else {
-		thread refreshThread(refreshDuringRender<formula_identifier, guessing, use_avx, julia>, ref(R), ref(*this), renderID);
+		thread refreshThread(refreshDuringRender<procedure_identifier, use_avx, julia>, ref(R), ref(*this), renderID);
 		R.execute(); //after this the render is done
 		{
 			lock_guard<mutex> guard(renders);
@@ -453,77 +446,52 @@ void FractalCanvas::createNewRenderTemplated(bool headless) {
 	return;
 }
 
-//this is the most used form of a case: the procedure has no AVX implementation, can use guessing and has a julia version
-#define procedureRenderCase(formula_identifier) \
-	case formula_identifier: { \
-		if (S.get_julia()) { \
-			createNewRenderTemplated<formula_identifier, true, false, true>(headless); \
+
+/*
+	This macro generates calls of createNewRenderTemplated for every possible combination of julia and using_avx.
+	There's a check whether the procedure has a julia or avx version before an attempt is made to use it. For example, is S.get_julia() is true, procedure.hasJuliaVersion determines whether a julia version is actually used. It overrides the setting.
+*/
+#define procedureRenderCase(procedure_identifier) \
+	case procedure_identifier: { \
+		constexpr Procedure procedure = getProcedureObject(procedure_identifier); \
+		if (using_avx) { \
+			if (S.get_julia()) \
+				createNewRenderTemplated<procedure_identifier, procedure.hasAvxVersion, procedure.hasJuliaVersion>(headless); \
+			else \
+				createNewRenderTemplated<procedure_identifier, procedure.hasAvxVersion, false>(headless); \
 		} \
 		else { \
-			createNewRenderTemplated<formula_identifier, true, false, false>(headless); \
+			if (S.get_julia()) \
+				createNewRenderTemplated<procedure_identifier, false, procedure.hasJuliaVersion>(headless); \
+			else \
+				createNewRenderTemplated<procedure_identifier, false, false>(headless); \
 		} \
 		break; \
 	}
 
 /* createNewRenderTemplated has template:
-	template <int formula_identifier, bool guessing, bool use_avx, bool julia>
+	template <int procedure_identifier, bool use_avx, bool julia>
 */
 void FractalCanvas::createNewRender(bool headless) {
 	if(debug) {
-		int formulaID = S.get_formula_identifier();
-		assert(formulaID == S.get_formula().identifier);
-		cout << "creating new render with formula: " << formulaID << " (" << S.get_formula().name << ")" << endl;
+		int procedure_identifier = S.get_procedure_identifier();
+		assert(procedure_identifier == S.get_procedure().id);
+		cout << "creating new render with procedure: " << procedure_identifier << " (" << S.get_procedure().name() << ")" << endl;
 	}
-	switch (S.get_formula_identifier()) {
-		case PROCEDURE_M2: {
-			if (using_avx) {
-				if (S.get_julia()) {
-					createNewRenderTemplated<PROCEDURE_M2, true, true, true>(headless);
-				}
-				else {
-					createNewRenderTemplated<PROCEDURE_M2, true, true, false>(headless);
-				}
-			}
-			else {
-				if (S.get_julia()) {
-					createNewRenderTemplated<PROCEDURE_M2, true, false, true>(headless);
-				}
-				else {
-					createNewRenderTemplated<PROCEDURE_M2, true, false, false>(headless);
-				}
-			}
-			break;
-		}
-		case PROCEDURE_BURNING_SHIP : {
-			if (S.get_julia()) {
-				createNewRenderTemplated<PROCEDURE_BURNING_SHIP, false, false, true>(headless);
-			}
-			else {
-				createNewRenderTemplated<PROCEDURE_BURNING_SHIP, false, false, false>(headless);
-			}
-			break;
-		}
-		case PROCEDURE_RECURSIVE_FRACTAL: {
-			createNewRenderTemplated<PROCEDURE_RECURSIVE_FRACTAL, true, false, false>(headless);
-			break;
-		}
-		case PROCEDURE_CHECKERS : {
-			createNewRenderTemplated<PROCEDURE_CHECKERS, true, false, false>(headless);
-			break;
-		}
-		procedureRenderCase(PROCEDURE_M3)
-		procedureRenderCase(PROCEDURE_M4)
-		procedureRenderCase(PROCEDURE_M5)
-		procedureRenderCase(PROCEDURE_HIGH_POWER)
-		procedureRenderCase(PROCEDURE_TRIPLE_MATCHMAKER)
-		case PROCEDURE_BI: {
-			createNewRenderTemplated<PROCEDURE_BI, true, false, false>(headless);
-			break;
-		}
-		case PROCEDURE_PURE_MORPHINGS: {
-			createNewRenderTemplated<PROCEDURE_PURE_MORPHINGS, true, false, false>(headless);
-			break;
-		}
+
+	switch (S.get_procedure_identifier()) {
+		procedureRenderCase(M2.id)
+		procedureRenderCase(M3.id)
+		procedureRenderCase(M4.id)
+		procedureRenderCase(M5.id)
+		procedureRenderCase(M512.id)
+		procedureRenderCase(BURNING_SHIP.id)
+		procedureRenderCase(CHECKERS.id)
+		procedureRenderCase(TRIPLE_MATCHMAKER.id)
+		procedureRenderCase(HIGH_POWER.id)
+		procedureRenderCase(RECURSIVE_FRACTAL.id)
+		procedureRenderCase(BI.id)
+		procedureRenderCase(PURE_MORPHINGS.id)
 	}
 }
 
@@ -885,7 +853,7 @@ LRESULT CALLBACK MainWndProc(HWND hWnd, UINT message, WPARAM wParam, LPARAM lPar
 	case WM_CREATE: {
 		hWndMain = hWnd;
 		AddMenus(hWnd, false);
-		statusBar = CreateWindowExW(0, STATUSCLASSNAME, L"", WS_CHILD | WS_VISIBLE, 0, 0, 0, 0, hWnd, (HMENU)mainWndStatusBar, hInst, NULL);
+		statusBar = CreateWindowExW(0, STATUSCLASSNAMEW, L"", WS_CHILD | WS_VISIBLE, 0, 0, 0, 0, hWnd, (HMENU)mainWndStatusBar, hInst, NULL);
 		int widths[4] = { 80, 180, 380, -1 };
 		SendMessage(statusBar, SB_SETPARTS, 4, (LPARAM)&widths);
 
@@ -904,28 +872,29 @@ LRESULT CALLBACK MainWndProc(HWND hWnd, UINT message, WPARAM wParam, LPARAM lPar
 	case WM_COMMAND: {
 		//menu selection
 		int menuOption = LOWORD(wParam);
-		int formula_identifier;
+		int procedure_identifier;
 
 		switch (menuOption) {
 			//Menu options that change the fractal type:
-			case MenuOption::BURNING_SHIP: { formula_identifier = PROCEDURE_BURNING_SHIP; break; }
-			case MenuOption::CHECKERS: { formula_identifier = PROCEDURE_CHECKERS; break; }
-			case MenuOption::M2: { formula_identifier = PROCEDURE_M2; break; }
-			case MenuOption::M3: { formula_identifier = PROCEDURE_M3; break; }
-			case MenuOption::M4: { formula_identifier = PROCEDURE_M4; break; }
-			case MenuOption::M5: { formula_identifier = PROCEDURE_M5; break; }
-			case MenuOption::TRIPLE_MATCHMAKER: { formula_identifier = PROCEDURE_TRIPLE_MATCHMAKER; break; }
-			case MenuOption::RECURSIVE_FRACTAL:  { formula_identifier = PROCEDURE_RECURSIVE_FRACTAL; break; }
-			case MenuOption::HIGH_POWER:  { formula_identifier = PROCEDURE_HIGH_POWER; break; }
-			case MenuOption::BI_SHOW: { formula_identifier = PROCEDURE_BI; break; }
-			case MenuOption::PURE_MORPHINGS: { formula_identifier = PROCEDURE_PURE_MORPHINGS; break; }
+			case MenuOption::BURNING_SHIP: { procedure_identifier = BURNING_SHIP.id; break; }
+			case MenuOption::CHECKERS: { procedure_identifier = CHECKERS.id; break; }
+			case MenuOption::M2: { procedure_identifier = M2.id; break; }
+			case MenuOption::M3: { procedure_identifier = M3.id; break; }
+			case MenuOption::M4: { procedure_identifier = M4.id; break; }
+			case MenuOption::M5: { procedure_identifier = M5.id; break; }
+			case MenuOption::M512: { procedure_identifier = M512.id; break; }
+			case MenuOption::TRIPLE_MATCHMAKER: { procedure_identifier = TRIPLE_MATCHMAKER.id; break; }
+			case MenuOption::RECURSIVE_FRACTAL:  { procedure_identifier = RECURSIVE_FRACTAL.id; break; }
+			case MenuOption::HIGH_POWER:  { procedure_identifier = HIGH_POWER.id; break; }
+			case MenuOption::BI_SHOW: { procedure_identifier = BI.id; break; }
+			case MenuOption::PURE_MORPHINGS: { procedure_identifier = PURE_MORPHINGS.id; break; }
 			default:
-				formula_identifier = -1;
+				procedure_identifier = -1;
 		}
 
-		if (formula_identifier != -1) {
-			bool fractalTypeChange = canvas.S.changeFormula(formula_identifier);
-			if (formula_identifier == PROCEDURE_BI) {
+		if (procedure_identifier != -1) {
+			bool fractalTypeChange = canvas.S.changeProcedure(procedure_identifier);
+			if (procedure_identifier == BI.id) {
 				string fixedParams = R"(
 				{
 					"programVersion": 6.2,
@@ -944,7 +913,7 @@ LRESULT CALLBACK MainWndProc(HWND hWnd, UINT message, WPARAM wParam, LPARAM lPar
 						"Im": 0.1
 					},
 					"julia": false,
-					"formula_identifier": 16,
+					"procedure_identifier": 16,
 					"post_transformation_type": 0,
 					"pre_transformation_type": 0,
 					"inflectionCount": 0,
@@ -1017,21 +986,21 @@ LRESULT CALLBACK MainWndProc(HWND hWnd, UINT message, WPARAM wParam, LPARAM lPar
 				break;
 			}
 			case MenuOption::SAVE_IMAGE: {
-				string filename = getDate() + " " + canvas.S.get_formula().name;
+				string filename = getDate() + " " + canvas.S.get_procedure().name();
 				if (BrowseFile(hWnd, FALSE, "Save PNG", "Portable Network Graphics (PNG)\0*.png\0\0", filename)) {
 					saveImage(filename);
 				}
 				break;
 			}
 			case MenuOption::SAVE_PARAMETERS: {
-				string filename = getDate() + " " + canvas.S.get_formula().name;
+				string filename = getDate() + " " + canvas.S.get_procedure().name();
 				if (BrowseFile(hWnd, FALSE, "Save parameters", "Parameters\0*.efp\0\0", filename)) {
 					writeParameters(canvas.S, filename);
 				}
 				break;
 			}
 			case MenuOption::SAVE_BOTH: {
-				string filename = getDate() + " " + canvas.S.get_formula().name;
+				string filename = getDate() + " " + canvas.S.get_procedure().name();
 				if (BrowseFile(hWnd, FALSE, "Save parameters and image", "Parameters\0*.efp\0\0", filename)) {
 					writeParameters(canvas.S, filename);
 					saveImage(filename + ".png");
@@ -1039,7 +1008,7 @@ LRESULT CALLBACK MainWndProc(HWND hWnd, UINT message, WPARAM wParam, LPARAM lPar
 				break;
 			}
 			case MenuOption::LOAD_PARAMETERS: {
-				string filename = getDate() + " " + canvas.S.get_formula().name;
+				string filename = getDate() + " " + canvas.S.get_procedure().name();
 				if (BrowseFile(hWnd, TRUE, "Load parameters", "Parameters\0*.efp\0\0", filename)) {
 					readParametersGUI(filename, true);
 				}
@@ -1524,12 +1493,27 @@ LRESULT CALLBACK JsonProc(HWND hJson, UINT message, WPARAM wParam, LPARAM lParam
 
 
 //utf16 to utf8 converter from https://stackoverflow.com/a/35103224/10336025
+#if _MSC_VER >= 1900
 std::string utf16_to_utf8(std::u16string utf16_string)
 {
     std::wstring_convert<std::codecvt_utf8_utf16<int16_t>, int16_t> convert;
     auto p = reinterpret_cast<const int16_t *>(utf16_string.data());
     return convert.to_bytes(p, p + utf16_string.size());
 }
+#else
+std::string utf16_to_utf8(std::u16string utf16_string)
+{
+    std::wstring_convert<std::codecvt_utf8_utf16<char16_t>, char16_t> convert;
+    return convert.to_bytes(utf16_string);
+}
+#endif
+
+#pragma GCC push_options
+#pragma GCC target ("avx")
+uint64 getFeatureMask() {
+	return _xgetbv(0);
+}
+#pragma GCC pop_options
 
 int CALLBACK WinMain(
 	_In_ HINSTANCE hInstance,
@@ -1677,7 +1661,7 @@ examples:
 	bool osUsesXSAVE_XRSTORE = cpuInfo[2] & (1 << 27) || false;
 	bool cpuAVXSuport = cpuInfo[2] & (1 << 28) || false;
 	if (osUsesXSAVE_XRSTORE && cpuAVXSuport) {
-		uint64 xcrFeatureMask = _xgetbv(_XCR_XFEATURE_ENABLED_MASK);
+		uint64 xcrFeatureMask = getFeatureMask();
 		using_avx = (xcrFeatureMask & 0x6) == 0x6;
 	}
 	cout << "using AVX: " << (using_avx ? "Yes" : "No") << endl;

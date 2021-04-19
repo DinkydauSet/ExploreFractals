@@ -11,9 +11,9 @@
 #include <cstdint>
 
 #ifndef NDEBUG
-const bool debug = true;
+constexpr bool debug = true;
 #else
-const bool debug = false;
+constexpr bool debug = false;
 #endif
 
 using namespace std;
@@ -31,14 +31,14 @@ typedef unsigned int uint;
 typedef uint32_t ARGB;
 
 typedef std::complex<double> double_c;
-const double_c I(0, 1);
-const double pi = 3.1415926535897932384626433832795;
+constexpr double_c I(0, 1);
+constexpr double pi = 3.1415926535897932384626433832795;
 
 //Constants
-const double PROGRAM_VERSION = 8.0;
-const uint NUMBER_OF_TRANSFORMATIONS = 7 + 1;
-const uint MAXIMUM_TILE_SIZE = 50; //tiles in renderSilverRect smaller than this do not get subdivided.
-const uint NEW_TILE_THREAD_MIN_PIXELS = 8; //For tiles with a width or height in PIXELS smaller than this no new threads are created, which has two reasons: 1. thread overhead; 2. See the explanation of stop_creating_threads in the function Render::renderSilverRect.
+constexpr double PROGRAM_VERSION = 8.1;
+constexpr uint NUMBER_OF_TRANSFORMATIONS = 7 + 1;
+constexpr uint MAXIMUM_TILE_SIZE = 50; //tiles in renderSilverRect smaller than this do not get subdivided.
+constexpr uint NEW_TILE_THREAD_MIN_PIXELS = 8; //For tiles with a width or height in PIXELS smaller than this no new threads are created, which has two reasons: 1. thread overhead; 2. See the explanation of stop_creating_threads in the function Render::renderSilverRect.
 int BI_CHOICE; //easter egg
 
 //I wonder if it's good to have global mutexes while using multiple instances of FractalCanvas. It makes no sense that one fractalcanvas can't resize while another one is rendering, for example, although multiple renders at once is questionable.
@@ -47,71 +47,92 @@ mutex renders;
 mutex drawingBitmap;
 mutex renderingBitmap;
 
+namespace ProcedureClass {
+	enum {
+		Mandelbrot
+		,Other
+	};
+}
 
-//Formulas
-struct Formula {
-	int identifier;
-	bool isGuessable;
+struct Procedure {
+
+	/*
+		from https://stackoverflow.com/a/37876799
+		This struct is a string-like type that can be declared as a constexpr. This is needed to be able to declare a Formula, which contains a name, as constexpr. I want to do that because procedure properties are constant values known at compile time.
+		C++20 will allow string to be declared as constexpr, so this trick can be removed when C++20 has good compiler support.
+	*/
+	struct constexpr_str {
+		char const* str;
+		std::size_t size;
+
+		// can only construct from a char[] literal
+		template <std::size_t N>
+		constexpr constexpr_str(char const (&s)[N])
+			: str(s)
+			, size(N - 1) // not count the trailing nul
+		{}
+	};
+
+	int id;
+	bool guessable;
 	int inflectionPower;
-	bool isEscapeTime; //This means the procedure is iterating a Mandelbrot type formula (z->f(z, c))
-	double escapeRadius;
-	string name;
+	constexpr_str name_;
+	bool hasJuliaVersion;
+	bool hasAvxVersion;
+	int procedureClass;
+
+	string name() {
+		return string(name_.str);
+	}
 };
 
-//Formula identifiers (also menu options)
-const int PROCEDURE_M2 = 4;
-const int PROCEDURE_BURNING_SHIP = 5;
-const int PROCEDURE_M3 = 6;
-const int PROCEDURE_M4 = 7;
-const int PROCEDURE_M5 = 8;
-const int PROCEDURE_TRIPLE_MATCHMAKER = 11;
-const int PROCEDURE_CHECKERS = 12;
-const int PROCEDURE_HIGH_POWER = 13;
-const int PROCEDURE_RECURSIVE_FRACTAL = 15;
-const int PROCEDURE_BI = 16;
-const int PROCEDURE_PURE_MORPHINGS = 17;
+/*
+	All procedures / formulas in the program
+	The id numbers should never be changed to keep backwards compatibility with parameter files.
 
-//identifier; isGuessable; inflectionPower, isEscapeTime, escapeRadius, name
-const Formula M2 = { PROCEDURE_M2, true, 2, true, 4, "Mandelbrot power 2" };
-const Formula M3 = { PROCEDURE_M3, true, 3, true, 2, "Mandelbrot power 3" };
-const Formula M4 = { PROCEDURE_M4, true, 4, true, pow(2, 2 / 3.), "Mandelbrot power 4" }; //Escape radius for Mandelbrot power n: pow(2, 2/(n-1))
-const Formula M5 = { PROCEDURE_M5, true, 5, true, pow(2, 2 / 4.), "Mandelbrot power 5" };
-const Formula BURNING_SHIP = { PROCEDURE_BURNING_SHIP, false, 2, true, 4, "Burning ship" };
-const Formula CHECKERS = { PROCEDURE_CHECKERS, true, 2, false, 4, "Checkers" };
-const Formula TRIPLE_MATCHMAKER = { PROCEDURE_TRIPLE_MATCHMAKER, true, 2, false, 550, "Triple Matchmaker" };
-const Formula HIGH_POWER = { PROCEDURE_HIGH_POWER, true, 2, true, 4, "High power Mandelbrot" };
-const Formula RECURSIVE_FRACTAL = { PROCEDURE_RECURSIVE_FRACTAL, true, 2, false, 4, "Recursive Fractal" };
-const Formula BI = { PROCEDURE_BI, true, 2, false, 4, "Business Intelligence" };
-const Formula PURE_MORPHINGS = { PROCEDURE_PURE_MORPHINGS, true, 2, false, 4, "Pure Julia morphings" };
+	The steps to add a new procedure:
+	 1. Add a constexpr Procedure to the list below.
+	 2. Add it to getProcedureObject.
+	 3. Add a case to the switch in FractalCanvas::createNewRender.
+	 4. Define the calculations that should be done when this procedure is used in Render::calcPoint. An AVX implementation should be placed in Render::calcPointVector. Note: hasJuliaVersion and hasAvxVersion should correspond with the real situation. An AVX implementation is not used if hasAvxVersion is false even if there is one. The same goes for julia versions.
+	 5. To make it available through menu options:
+	   5.1 Create a new value for it in the enum in the MenuOption namespace.
+	   5.2 Use the value in adding the menu in the AddMenus function.
+	   5.3 Handle usage of the menu option in the case WM_COMMAND in MainWndProc.
+*/
+//                                      id   guessable inflection-  name                    hasJulia-  hasAvx-    procedureClass
+//                                                      Power                                 Version    Version
+constexpr Procedure NOT_FOUND =         {-1,  false,   -1,          "Procedure not found",  false,     false,     ProcedureClass::Other };
+constexpr Procedure M2 =                { 4,  true,     2,          "Mandelbrot power 2",   true,      true,      ProcedureClass::Mandelbrot };
+constexpr Procedure BURNING_SHIP =      { 5,  false,    2,          "Burning ship",         true,      false,     ProcedureClass::Other };
+constexpr Procedure M3 =                { 6,  true,     3,          "Mandelbrot power 3",   true,      false,     ProcedureClass::Mandelbrot };
+constexpr Procedure M4 =                { 7,  true,     4,          "Mandelbrot power 4",   true,      false,     ProcedureClass::Mandelbrot };
+constexpr Procedure M5 =                { 8,  true,     5,          "Mandelbrot power 5",   true,      false,     ProcedureClass::Mandelbrot };
+constexpr Procedure TRIPLE_MATCHMAKER = { 11, true,     2,          "Triple Matchmaker",    true,      false,     ProcedureClass::Other };
+constexpr Procedure CHECKERS =          { 12, true,     2,          "Checkers",             false,     false,     ProcedureClass::Other };
+constexpr Procedure HIGH_POWER =        { 13, true,     33554432,   "High power Mandelbrot",true,      false,     ProcedureClass::Mandelbrot };
+constexpr Procedure RECURSIVE_FRACTAL = { 15, true,     2,          "Recursive Fractal",    false,     false,     ProcedureClass::Other };
+constexpr Procedure BI =                { 16, true,     2,          "Business Intelligence",false,     false,     ProcedureClass::Other };
+constexpr Procedure PURE_MORPHINGS =    { 17, true,     2,          "Pure Julia morphings", false,     false,     ProcedureClass::Other };
+constexpr Procedure M512 =              { 18, true,     512,        "Mandelbrot power 512", true,      false,     ProcedureClass::Mandelbrot };
 
-Formula getFormulaObject(int identifier) {
-	switch (identifier) {
-	case PROCEDURE_M2:
-		return M2;
-	case PROCEDURE_M3:
-		return M3;
-	case PROCEDURE_M4:
-		return M4;
-	case PROCEDURE_M5:
-		return M5;
-	case PROCEDURE_BURNING_SHIP:
-		return BURNING_SHIP;
-	case PROCEDURE_CHECKERS:
-		return CHECKERS;
-	case PROCEDURE_TRIPLE_MATCHMAKER:
-		return TRIPLE_MATCHMAKER;
-	case PROCEDURE_HIGH_POWER:
-		return HIGH_POWER;
-	case PROCEDURE_RECURSIVE_FRACTAL:
-		return RECURSIVE_FRACTAL;
-	case PROCEDURE_BI:
-		return BI;
-	case PROCEDURE_PURE_MORPHINGS:
-		return PURE_MORPHINGS;
+constexpr Procedure getProcedureObject(int id) {
+	switch (id) {
+		case M2.id:                return M2;
+		case M3.id:                return M3;
+		case M4.id:                return M4;
+		case M5.id:                return M5;
+		case BURNING_SHIP.id:      return BURNING_SHIP;
+		case CHECKERS.id:          return CHECKERS;
+		case TRIPLE_MATCHMAKER.id: return TRIPLE_MATCHMAKER;
+		case HIGH_POWER.id:        return HIGH_POWER;
+		case RECURSIVE_FRACTAL.id: return RECURSIVE_FRACTAL;
+		case BI.id:                return BI;
+		case PURE_MORPHINGS.id:    return PURE_MORPHINGS;
+		case M512.id:              return M512;
 	}
-	//Not found:
-	Formula f; f.identifier = -1;
-	return f;
+	//not found
+	return NOT_FOUND;
 }
 
 

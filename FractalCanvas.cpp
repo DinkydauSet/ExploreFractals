@@ -12,7 +12,7 @@
 
 using namespace std;
 
-const uint64 MAXIMUM_BITMAP_SIZE = 2147483648; // 2^31
+constexpr uint64 MAXIMUM_BITMAP_SIZE = 2147483648; // 2^31
 
 /*
 	This class uses one integer as as data container to store multiple properties of a calculated point as follows:
@@ -75,7 +75,7 @@ public:
 		return renderID;
 	}
 
-	template <int formula_identifier, bool guessing, bool use_avx, bool julia>
+	template <int procedure_identifier, bool use_avx, bool julia>
 	void createNewRenderTemplated(bool);
 
 	void createNewRender(bool);
@@ -106,11 +106,13 @@ public:
 	}
 
 	inline ARGB gradient(int iterationCount) {
-		uint number_of_colors = S.gradientColors.size();
+		const vector<ARGB>& gradientColors = S.get_gradientColors();
+
+		uint number_of_colors = gradientColors.size();
 		double gradientPosition = (iterationCount + S.get_gradientOffsetTerm()) * S.get_gradientSpeedFactor();
 		uint asInt = (uint)gradientPosition;
-		ARGB previousColor = S.gradientColors[asInt % number_of_colors];
-		ARGB nextColor = S.gradientColors[(asInt + 1) % number_of_colors];
+		ARGB previousColor = gradientColors[asInt % number_of_colors];
+		ARGB nextColor = gradientColors[(asInt + 1) % number_of_colors];
 		double ratio = gradientPosition - asInt;
 		assert(ratio >= 0);
 		assert(ratio <= 1);

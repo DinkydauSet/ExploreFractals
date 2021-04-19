@@ -16,7 +16,7 @@ HWND WINAPI CreateTrackbar(
 	UINT selMax,     // maximum value in trackbar range
 	int xPos, int yPos,
 	int hSize, int vSize,
-	int identifier,
+	int id,
 	HINSTANCE hInst)
 {
 	HWND hwndTrack = CreateWindowEx(
@@ -30,7 +30,7 @@ HWND WINAPI CreateTrackbar(
 		xPos, yPos,                          // position 
 		hSize, vSize,                         // size 
 		hwndDlg,                         // parent window 
-		(HMENU)identifier,                     // control identifier 
+		(HMENU)id,                     // control id 
 		hInst,                         // instance 
 		NULL                             // no WM_CREATE parameter 
 	);
