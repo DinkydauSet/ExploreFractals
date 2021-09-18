@@ -1,32 +1,29 @@
 # ExploreFractals
 A tool for testing the effect of Mandelbrot set Julia morphings
 
-![image](https://user-images.githubusercontent.com/29734312/112564228-2d29cb00-8ddb-11eb-99ab-17f434847902.png)
+![image](https://user-images.githubusercontent.com/29734312/133895838-a5ac832e-eaa6-408e-92f4-947a28e0f351.png)
 
 With this program you can test the effect of inflections / Julia morphings on the Mandelbrot set with powers 2, 3, 4 and 5. This works by transforming the plane and then actually rendering the fractal. Each click adds an inflection at the location of the cursor. You can also work with Julia sets. You can go somewhere in the M-set, then use "Toggle Julia" which uses the center of the screen as the seed for the Julia set.
 
 ### Download
 
-See this forum thread at fractalforums: https://fractalforums.org/other/55/explore-fractals-inflection-tool/777
-
-You can also find more information about the program there.
+See the releases: https://github.com/DinkydauSet/ExploreFractals/releases
 
 ### Characteristics
 
 1. add a Julia morphing with just one mouse click
 2. fast and responsive
 3. not for deep zooming and perturbation
-4. can save and load parameter files in a human-readable JSON format
-5. can render and save images with oversampling
-6. can be used to render images and animations as a headless commandline tool
-7. works in Wine
-8. can also be used to explore unmorphed fractals
-9. limited to double precision floating point (I wish to improve that some day.)
+4. works in Wine
+5. commandline options to render images and animations
+6. can save and load parameter files in a human-readable JSON format
+7. can render and save images with oversampling
+10. limited to double precision floating point (I wish to improve that some day.)
 
 
 ### Commandline parameters
 
-all available parameters in version 8:
+all available parameters in version 9:
 
 ```
 -p name.efp     use the file name.efp as initial parameters. default: default.efp
@@ -54,11 +51,11 @@ ExploreFractals -p name.efp --width 1920 --height 1080 --oversampling 2
 
 ### Compiling the code
 
-The only file that needs to be compiled is ExploreFractals.cpp.
+The only file that needs to be compiled is ExploreFractals.cpp. As of version 9, the program needs to be linked to the Nana GUI library. More information: https://github.com/DinkydauSet/ExploreFractals/releases/tag/9.0
 
 To compile with GCC:
 
-> g++ ExploreFractals.cpp -std=c++17 -s -static -m64 -O2 -ffast-math -lgdi32 -lcomdlg32 -D NDEBUG -o ExploreFractals.exe
+> g++ ExploreFractals.cpp -std=c++17 -s -static -m64 -O2 -ffast-math -I. -L. -lnana -lgdi32 -lcomdlg32 -D NDEBUG -o ExploreFractals.exe
 
 More information about compiling with GCC: https://github.com/DinkydauSet/ExploreFractals/wiki/Compiling-with-GCC
 
@@ -75,6 +72,20 @@ The code here on github includes some libraries:
 All of the libraries mention that they allow to be redistributed. I do so to make it easier to compile the code.
 
 ### Changelog
+
+#### Version 9 (2021-09-18)
+
+Changes:
+1. new GUI made with Nana
+2. "Largest circle within the cardioid"-formula to avoid having to iterate some pixels, especially useful for extra speed with unzoomed high power Mandelbrots
+3. compiled with GCC: some formulas are faster, especially burning ship
+
+Fixed problems:
+1. Mandelbrot power 2 julia sets with AVX was incorrect for pixels with iterationcount 0. The result was a weird pattern around Julia sets.
+2. Changing the gradient speed could suddenly shift the gradient by one color, as if the offset was changed. This is fixed by making the offset fractional (used to be integer), which is a quality improvement too. Old parameter files may be rendered slightly differently.
+
+Known problems:
+1. Memory leak: about 5 MB of memory leaks for every 30 tabs openend and closed.
 
 #### Version 8 (2021-04-12)
 
