@@ -76,7 +76,7 @@ All of the libraries mention that they allow to be redistributed. I do so to mak
 #### Version 9 (2021-09-18)
 
 Changes:
-1. new GUI made with Nana
+1. new GUI made with Nana.  This includes tabs, history and keyboard shortcuts.
 2. "Largest circle within the cardioid"-formula to avoid having to iterate some pixels, especially useful for extra speed with unzoomed high power Mandelbrots
 3. compiled with GCC: some formulas are faster, especially burning ship
 
