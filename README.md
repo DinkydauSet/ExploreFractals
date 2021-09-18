@@ -3,7 +3,7 @@ A tool for testing the effect of Mandelbrot set Julia morphings
 
 ![image](https://user-images.githubusercontent.com/29734312/133895838-a5ac832e-eaa6-408e-92f4-947a28e0f351.png)
 
-With this program you can test the effect of inflections / Julia morphings on the Mandelbrot set with powers 2, 3, 4 and 5. This works by transforming the plane and then actually rendering the fractal. Each click adds an inflection at the location of the cursor. You can also work with Julia sets. You can go somewhere in the M-set, then use "Toggle Julia" which uses the center of the screen as the seed for the Julia set.
+With this program you can test the effect of inflections / Julia morphings on the Mandelbrot set and some other fractal types. This works by transforming the plane and then actually rendering the fractal. Each click adds an inflection at the location of the cursor. You can also work with Julia sets. You can go somewhere in the M-set, then use "Toggle Julia" which uses the center of the screen as the seed for the Julia set.
 
 ### Download
 
