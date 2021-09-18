@@ -3,8 +3,8 @@
 
 //standard library
 #include <iostream>
-#include <cassert>
-#include <thread>
+#include <algorithm>
+#include <functional>
 
 //this program
 #include "common.cpp"
@@ -21,16 +21,18 @@ constexpr uint64 MAXIMUM_BITMAP_SIZE = 2147483648; // 2^31
 	32nd bit: guessed (boolean)
 
 	The reason for this construction is that storing those values normally uses two times as much memory. The corresponding struct would be:
+
 	struct IterData {
 		uint iterationCount; //4 bytes
 		bool inMinibrot; //1 byte
 		bool guessed; //1 byte
 	};
+
 	A bool uses 1 byte of memory (8 times as much as strictly needed). Together that's 6 bytes for the struct, but the compiler rounds that to a multiple of 4, making the struct cost 8 bytes.
 
 	So by using 2 bits of the data to store the boolean values, memory usage is reduced by half at the cost of 2 bits of precision for the iterationcount, which means the maximum value of the iterationcount is 2^30 = 1,073,741,824.
 
-	The iterationcount limit can be easily raised to 2^62 by using a uint64 instead of a uint, providing a much higher limit than the struct above while using the same amount of memory.
+	The iterationcount limit can be easily raised to 2^62 by using a uint64 instead of a uint, giving a much higher limit than the struct above while using the same amount of memory.
 */
 class IterData {
 	uint data;
@@ -54,68 +56,153 @@ public:
 	}
 };
 
+
 class FractalCanvas {
 public:
-	IterData* iters;
-	ARGB* ptPixels; //bitmap colors representing the iteration data
-	FractalParameters S;
-	uint lastRenderID;
-	uint activeRenders;
-	uint lastBitmapRenderID;
-	uint activeBitmapRenders;
-	uint number_of_threads;
-	BitmapManager* bitmapManager;
+	IterData* iters{ nullptr }; //iteration data array, managed by FractalCanvas
+	ARGB* ptPixels{ nullptr }; //bitmap colors representing the iteration data, managed by the bitmapManager, not FractalCanvas
+private:
+	FractalParameters mP;
+public:
+	inline const FractalParameters& P() { return mP; } //read access to P
+	inline FractalParameters& Pmutable() { return mP; } //read-write access to P
+	
+	mutex genericMutex; //mutex for various race condition tasks such as updating the uints below; should not be held for a long time
+	mutex activeRender; //only one render can be executing at any one time
+	mutex activeBitmapRender;
+	//The mutexes are used to guarantee correctness of these 5 values:
+	//todo: inconsistent use of int and uint for renderIDs
+	int lastRenderID{ 0 };
+	int activeRenders{ 0 };
+	int renderQueueSize{ 0 };
+	int lastBitmapRenderID{ 0 };
+	int activeBitmapRenders{ 0 };
+	int bitmapRenderQueueSize{ 0 };
+	int otherActiveThreads{ 0 };
 
-	uint cancelRender() {
+	uint number_of_threads;
+	shared_ptr<BitmapManager> bitmapManager;
+	vector<GUIInterface*> GUIs; //there will usually be 1 GUI, but I want to make it possible to have 0 GUIs for commandline rendering.
+
+	// The definition of this can't be here because it uses the Render class, but the Render class can only be defined after FractalCanvas.
+	template <int procedure_identifier, bool use_avx, bool julia>
+	void createNewRenderTemplated(uint renderID);
+
+	// This only works if no new renders and bitmapRenders are queued while this function is busy.
+	void end_all_usage()
+	{
+		if(debug) cout << "FractalCanvas ending all usage" << endl;
+		while (true) {
+			cancelRender();
+			lock_guard<mutex> guard(activeRender);
+			if(debug) cout << "waiting for renders to stop: activeRenders: " << activeRenders << ", queue size: " << renderQueueSize << endl;
+			if (renderQueueSize == 0)
+				break;
+		}
+
+		while (true) {
+			cancelBitmapRender();
+			lock_guard<mutex> guard(activeBitmapRender);
+			if(debug) cout << "waiting for bitmap renders to stop: activeBitmapRenders: " << activeBitmapRenders << ", queue size: " << bitmapRenderQueueSize << ", other active threads: " << otherActiveThreads << endl;
+			if (bitmapRenderQueueSize == 0 && otherActiveThreads == 0)
+				break;
+		}
+		if(debug) cout << "FractalCanvas ended all usage" << endl;
+	}
+
+	FractalCanvas(uint number_of_threads, shared_ptr<BitmapManager> bitmapManager, vector<GUIInterface*> GUIs = {})
+	: bitmapManager(bitmapManager)
+	, GUIs(GUIs)
+	{
+		assert(number_of_threads > 0);
+		if(debug) cout << "constructing FractalCanvas" << endl;
+		this->number_of_threads = number_of_threads;
+
+		/*
+			This sets the width and height to 1 and allocates memory for that size. This is to ensure that the FractalCanvas' state is consistent. Currently it's not consistent because no memory has been allocated, which corresponds to a width and height of 0, which is an invalid value for many of the functions.
+		*/
+		resize(1,1,1);
+		mP.clearModified();
+		if(debug) cout << "canvas constructed with dimensions " << mP.get_width() << "x" << mP.get_height() << endl;
+	}
+
+	//constructor with initial parameters
+	FractalCanvas(FractalParameters& parameters, uint number_of_threads, shared_ptr<BitmapManager> bitmapManager, vector<GUIInterface*> GUIs)
+	: FractalCanvas(number_of_threads, bitmapManager, GUIs)
+	{
+		changeParameters(parameters);
+		if(debug) cout << "canvas parameters changed with dimensions " << mP.get_width() << "x" << mP.get_height() << endl;
+	}
+
+	~FractalCanvas() {
+		if(debug) cout << "deleting FractalCanvas " << this << endl;
+
+		end_all_usage();
+		free(iters);
+
+		if(debug) cout << "deleted FractalCanvas " << this << endl;
+	}
+
+	inline void* voidPtr() { return reinterpret_cast<void*>(this); }
+
+	void parametersChangedEvent(int source_id = 0) {
+		for (GUIInterface* gui : GUIs) {
+			gui->parametersChanged(voidPtr(), source_id);
+		}
+	}
+
+	void sizeChangedEvent() {
+		for (GUIInterface* gui : GUIs) {
+			gui->canvasSizeChanged(voidPtr());
+		}
+	}
+
+	void renderStartedEvent(shared_ptr<RenderInterface> render, int renderID) {
+		for (GUIInterface* gui : GUIs) {
+			gui->renderStarted(move(render));
+		}
+	}
+
+	void renderFinishedEvent(shared_ptr<RenderInterface> render, int renderID) {
+		for (GUIInterface* gui : GUIs) {
+			gui->renderFinished(move(render));
+		}
+	}
+
+	void bitmapRenderStartedEvent(int bitmapRenderID) {
+		for (GUIInterface* gui : GUIs) {
+			gui->bitmapRenderStarted(voidPtr(), bitmapRenderID);
+		}
+	}
+
+	void bitmapRenderFinishedEvent(int bitmapRenderID) {
+		for (GUIInterface* gui : GUIs) {
+			gui->bitmapRenderFinished(voidPtr(), bitmapRenderID);
+		}
+	}
+
+	void cancelRender() {
 		/*
 			This causes active renders to stop. It doesn't actively cancel anything, rather it's the render itself that checks, every so often, whether it should stop.
 			Changing the lastRenderID here doesn't require a lock. If it happens that another threads is also changing lastRenderID, that must be because of another cancellation or new render, which already has the desired effect.
 		*/
-		uint renderID = ++lastRenderID;
-		return renderID;
+		++lastRenderID;
 	}
 
-	template <int procedure_identifier, bool use_avx, bool julia>
-	void createNewRenderTemplated(bool);
-
-	void createNewRender(bool);
-
-	FractalCanvas() {} //required to declare a FractalCanvas without assigning a value
-
-	FractalCanvas(FractalParameters& parameters, uint number_of_threads, BitmapManager& bitmapManager) {
-		assert(number_of_threads > 0);
-		cout << "constructing FractalCanvas" << endl;
-		this->bitmapManager = &bitmapManager;
-		this->lastRenderID = 0;
-		this->activeRenders = 0;
-		this->lastBitmapRenderID = 0;
-		this->activeBitmapRenders = 0;
-		this->number_of_threads = number_of_threads;
-		this->iters = nullptr;
-		this->ptPixels = nullptr;
-
-		/*
-			This sets the width and height to 1 and allocates memory for that size. This is to ensure that the FractalCanvas' state is consistent. Currently it's not consistent because memory has been allocated, which corresponds to a width and height of 0, which is an invalid value for many of the functions.
-		*/
-		resize(1,1,1);
-		changeParameters(parameters);
-		cout << "canvas constructed with dimensions " << S.get_width() << "x" << S.get_height() << endl;
-	}
-	~FractalCanvas() {
-		if(debug) cout << "deleting fractalcanvas" << endl;
+	void cancelBitmapRender() {
+		++lastBitmapRenderID;
 	}
 
 	inline ARGB gradient(int iterationCount) {
-		const vector<ARGB>& gradientColors = S.get_gradientColors();
+		const vector<ARGB>& gradientColors = mP.get_gradientColors();
 
 		uint number_of_colors = gradientColors.size();
-		double gradientPosition = (iterationCount + S.get_gradientOffsetTerm()) * S.get_gradientSpeedFactor();
+		double gradientPosition = (iterationCount + mP.get_gradientOffsetTerm()) * mP.get_gradientSpeedFactor();
 		uint asInt = (uint)gradientPosition;
 		ARGB previousColor = gradientColors[asInt % number_of_colors];
 		ARGB nextColor = gradientColors[(asInt + 1) % number_of_colors];
 		double ratio = gradientPosition - asInt;
-		assert(ratio >= 0);
-		assert(ratio <= 1);
+
 
 		return rgbColorAverage(previousColor, nextColor, ratio);
 	}
@@ -131,8 +218,17 @@ public:
 		bool changed;
 		ResizeResultType resultType;
 	};
+
+	ResizeResult resize(uint newOversampling, uint newScreenWidth, uint newScreenHeight) {
+		uint oldScreenWidth = mP.get_screenWidth();
+		uint oldScreenHeight = mP.get_screenHeight();
+		uint oldOversampling = mP.get_oversampling();
+		return resize(newOversampling, newScreenWidth, newScreenHeight, oldOversampling, oldScreenWidth, oldScreenHeight);
+	}
 	
-	ResizeResult resize(int newOversampling, int newScreenWidth, int newScreenHeight) {
+	ResizeResult resize(uint newOversampling, uint newScreenWidth, uint newScreenHeight
+					 ,uint64 oldOversampling, uint64 oldScreenWidth, uint64 oldScreenHeight)
+	{
 		assert(newOversampling > 0);
 		assert(newScreenWidth > 0);
 		assert(newScreenHeight > 0);
@@ -150,18 +246,16 @@ public:
 			cout << "reallocated bitmap" << endl;
 		};
 
-		uint64 oldWidth = S.get_width();
-		uint64 oldHeight = S.get_height();
-		uint64 oldScreenWidth = S.get_screenWidth();
-		uint64 oldScreenHeight = S.get_screenHeight();
-		uint64 oldOversampling = S.get_oversampling();
+		uint64 oldWidth = oldScreenWidth * oldOversampling;
+		uint64 oldHeight = oldScreenHeight * oldOversampling;
 		uint64 newWidth = newScreenWidth * newOversampling;
 		uint64 newHeight = newScreenHeight * newOversampling;
 		uint64 bitmap_size = newScreenWidth * newScreenHeight;
 		uint64 fractalcanvas_size = newWidth * newHeight;
+		uint64 old_fractalcanvas_size = oldWidth * oldHeight;
 
-		bool realloc_bitmap = newScreenWidth != S.get_screenWidth() || newScreenHeight != S.get_screenHeight();
-		bool realloc_fractalcanvas = newWidth != oldWidth || newHeight != oldHeight;
+		bool realloc_bitmap = newScreenWidth != oldScreenWidth || newScreenHeight != oldScreenHeight;
+		bool realloc_fractalcanvas = old_fractalcanvas_size != fractalcanvas_size;
 
 		if (!realloc_bitmap && !realloc_fractalcanvas) {
 			cout << "entered resize. The resolutions remain the same. Nothing happens." << endl;
@@ -188,10 +282,11 @@ public:
 
 		{
 			cancelRender(); //This will stop active renders as soon as possible which will release the mutex locks that are needed here.
-			lock_guard<mutex> guard(renders);
-			lock_guard<mutex> guard2(renderingBitmap);
+			lock_guard<mutex> guard(activeRender);
+			cancelBitmapRender();
+			lock_guard<mutex> guard2(activeBitmapRender);
 
-			S.resize(newOversampling, newScreenWidth, newScreenHeight);
+			mP.resize(newOversampling, newScreenWidth, newScreenHeight);
 
 			if (realloc_fractalcanvas) {
 				fractalcanvas_realloc(fractalcanvas_size);
@@ -206,7 +301,7 @@ public:
 				success = false;
 
 				// Try to get back the old size
-				S.resize(oldOversampling, oldScreenWidth, oldScreenHeight);
+				mP.resize(oldOversampling, oldScreenWidth, oldScreenHeight);
 
 				if (realloc_fractalcanvas) {
 					fractalcanvas_realloc(oldWidth * oldHeight);
@@ -221,7 +316,7 @@ public:
 				}
 				else {
 					//As a last resort, change the image size to 1x1. This can't fail in any reasonable situation.
-					S.resize(1,1,1);
+					mP.resize(1,1,1);
 					fractalcanvas_realloc(1);
 					bitmap_realloc(1,1);
 					changed = true;
@@ -232,59 +327,160 @@ public:
 		return {success, changed, res};
 	}
 
-	ResizeResult changeParameters(FractalParameters& newS) {
-		ResizeResult res = resize(newS.get_oversampling(), newS.get_screenWidth(), newS.get_screenHeight());
-		if (res.success)	 S = newS;
-		else	             cout << "Changing the FractalParameters of the FractalCanvas failed." << endl;
+	private: FractalParameters temp;
+public:
+
+	/*
+		action is a function that modified the parameters it's given. changeParameters resizes the canvas if necessary and notifies the GUI by emitting events.
+
+		The bools modifiedCalculations, modifiedColors and modifiedMemory are updated automatically by the publicly available functions of FractalParameters.
+
+		parametersChangedEvent is always called, even if there's no change to calculations, colors and memory. This is necessary for the nana GUI to update after setting the inflection zoom level, which doesn't affect the calculations, coloring or size, but still requires a GUI update.
+	*/
+	ResizeResult changeParameters(std::function<void(FractalParameters&)> action, int source_id = 0, bool check_modified_memory = true)
+	{
+		ResizeResult res = {true, false, ResizeResultType::Success};
+
+		uint old_screenWidth = mP.get_screenWidth();
+		uint old_screenHeight = mP.get_screenHeight();
+		uint old_oversampling = mP.get_oversampling();
+
+		check_modified_memory = check_modified_memory || mP.modifiedMemory; //If the parameters were already changed, overrule
+		if(debug) cout << "modified status: " << mP.modifiedSize << mP.modifiedMemory << mP.modifiedCalculations << mP.modifiedColors << endl;
+
+		auto postActions = [this, source_id](ResizeResult res)
+		{	
+			assert( mP.modifiedSize == res.changed ); //The modification in size has resulted in a changed size of the FractalCanvas
+			assert( ! (mP.modifiedMemory && ! mP.modifiedCalculations) ); //If memory is changed, that also changes the calculations.
+			assert( ! (mP.modifiedSize && ! mP.modifiedMemory) ); //If the size is changed, that also changes the memory.
+
+			if (res.changed)
+				sizeChangedEvent();
+			parametersChangedEvent(source_id);
+		};
+
+		//
+		// If check_modified_memory, the action is first applied to a copy of the parameters, to see if the changes require allocating new memory. In that case, the parameters should not be changed during a render. The generality of accepting a function makes programming the GUI a lot easier, but it requires this kind of check.
+		//
+		// check_modified_memory can be set to false to skip the check for efficiency. Then the action is simply applied to the parameters, even if there's a render going on. It's the responsibility of the user of changeParameters to disable the check only when it is known in advance that no memory allocation can occur during a render.
+		//
+
+		if (check_modified_memory) {
+			// After this temp.modifiedMemory will indicate whether the action would require allocating memory
+			temp.fromParameters(mP);
+			temp.clearModified();
+			action(temp);
+		}
+
+		if ( ! check_modified_memory || ! temp.modifiedMemory) {
+			if(debug) cout << "changeParameters at location 1" << endl;
+			action(mP);
+			postActions(res);
+		}
+		else {
+			if (temp.modifiedSize) {
+				if(debug) cout << "changeParameters at location 2" << endl;
+				{
+					cancelRender();
+					lock_guard<mutex> guard(activeRender);
+					cancelBitmapRender();
+					lock_guard<mutex> guard2(activeBitmapRender);
+
+					action(mP);
+				}
+				res = resize(mP.get_oversampling(), mP.get_screenWidth(), mP.get_screenHeight(), old_oversampling, old_screenWidth, old_screenHeight);
+				postActions(res);
+			}
+			else
+			{
+				// Different memory change than size, can be done in another thread if needed. First try to do it in this thread:
+					
+				bool done = false;
+
+				cancelRender();
+				if(activeRender.try_lock())
+				{
+					cancelBitmapRender();
+					if (activeBitmapRender.try_lock())
+					{
+						if(debug) cout << "changeParameters at location 3" << endl;
+						action(mP);
+						
+						done = true;
+						activeBitmapRender.unlock();
+					}
+					activeRender.unlock();
+				}
+
+				if (done) {
+					if(debug) cout << "changeParameters at location 4" << endl;
+					postActions(res);
+				}
+				else
+				{
+					//Start another thread that can apply the changes after the renders are done. The GUI can start responding again while the thread waits.
+					
+					addToThreadcount(1);
+					thread([=](ResizeResult res)
+					{
+						if(debug) cout << "changeParameters at location 5" << endl;
+						{
+							cancelRender();
+							lock_guard<mutex> guard(activeRender);
+							cancelBitmapRender();
+							lock_guard<mutex> guard2(activeBitmapRender);
+
+							action(mP);
+						}
+						postActions(res);
+						addToThreadcount(-1);
+					}, res).detach();
+				}
+			}
+		}
+
 		return res;
 	}
 
-	void refreshDuringBitmapRender(int bitmapRenderID) {
-		this_thread::sleep_for(chrono::milliseconds(70));
-		//if(debug) cout << "refreshDuringBitmapRender " << bitmapRenderID << " awakened" << endl;
-		int screenWidth = S.get_screenWidth();
-		int screenHeight = S.get_screenHeight();
-
-		while (lastBitmapRenderID == bitmapRenderID && activeBitmapRenders != 0) {
-			//if(debug) cout << "refreshDuringBitmapRender " << bitmapRenderID << " waiting for lock drawingBitmap" << endl;
-			{
-				lock_guard<mutex> guard(drawingBitmap);
-				//if(debug) cout << "refreshDuringBitmapRender " << bitmapRenderID << " has lock drawingBitmap" << endl;
-				if (lastBitmapRenderID == bitmapRenderID && activeRenders == 0) { //if a render is active, it also has a refreshthread
-					bitmapManager->draw();
-				}
-				else {
-					//if(debug) if(activeRenders == 0) cout << "refreshDuringBitmapRender " << bitmapRenderID << " doesn't draw because the render was cancelled" << endl;
-				}
-			}
-			//if(debug) cout << "refreshDuringBitmapRender " << bitmapRenderID << " released lock drawingBitmap" << endl;
-			this_thread::sleep_for(std::chrono::milliseconds(100));
-		}
-		//if(debug) cout << "refreshDuringBitmapRender thread " << bitmapRenderID << " ended" << endl;
+	void addToThreadcount(int amount) {
+		lock_guard<mutex> guard(genericMutex);
+		assert((int64)otherActiveThreads + amount >= 0); //there should not be less than 0 threads
+		otherActiveThreads += amount;
+		if(debug) cout << "FractalCanvas other active threads count changed to " << otherActiveThreads << endl;
 	}
 
+	ResizeResult changeParameters(const FractalParameters& newP, int source_id = 0)
+	{
+		return changeParameters([&](FractalParameters& P)
+		{
+			P.fromParameters(newP);
+		}, source_id);
+	}
+
+	//	returns the index in ptPixels of (x, y) in the bitmap
 	inline uint pixelIndex_of_pixelXY(uint x, uint y) {
-		//returns the index in ptPixels of (x, y) in the bitmap
-		assert(x >= 0); assert(x < S.get_screenWidth());
-		assert(y >= 0); assert(y < S.get_screenHeight());
-		return S.get_screenWidth()*(S.get_screenHeight() - y - 1) + x;
+		
+		assert(x >= 0); assert(x < mP.get_screenWidth());
+		assert(y >= 0); assert(y < mP.get_screenHeight());
+		return mP.get_screenWidth()*y + x;
 	}
 
+	//unused?
 	inline uint pixelIndex_of_itersXY(uint x, uint y) {
 		//returns the corresponding index in ptPixels of (x, y) in the fractal canvas
-		assert(x >= 0); assert(x < S.get_width());
-		assert(y >= 0); assert(y < S.get_height());
-		int oversampling = S.get_oversampling();
+		assert(x >= 0); assert(x < mP.get_width());
+		assert(y >= 0); assert(y < mP.get_height());
+		int oversampling = mP.get_oversampling();
 		return pixelIndex_of_pixelXY(x / oversampling, y / oversampling);
 	}
 
 	inline uint itersIndex_of_itersXY(uint x, uint y) {
-		assert(x >= 0); assert(x < S.get_width());
-		assert(y >= 0); assert(y < S.get_height());
+		assert(x >= 0); assert(x < mP.get_width());
+		assert(y >= 0); assert(y < mP.get_height());
 		//returns the index in iters of (x, y) in the fractalcanvas
-		uint screenWidth = S.get_screenWidth();
-		uint screenHeight = S.get_screenHeight();
-		uint oversampling = S.get_oversampling();
+		uint screenWidth = mP.get_screenWidth();
+		uint screenHeight = mP.get_screenHeight();
+		uint oversampling = mP.get_oversampling();
 		uint samples = oversampling * oversampling;
 		uint dx = x % oversampling;
 		uint dy = y % oversampling;
@@ -302,13 +498,13 @@ public:
 	}
 
 	inline double_c map(uint xPos, uint yPos) {
-		return S.map(xPos, yPos);
+		return mP.map(xPos, yPos);
 	}
 
 	inline void setPixel(uint i, uint j, uint iterationCount, bool guessed, bool isInMinibrot)
 	{
 		assert(i >= 0 && j >= 0);
-		assert(i < S.get_width() && j < S.get_height());
+		assert(i < mP.get_width() && j < mP.get_height());
 
 		IterData result(iterationCount, guessed, isInMinibrot);
 		uint index = itersIndex_of_itersXY(i, j);
@@ -316,11 +512,9 @@ public:
 	}
 	
 	void renderBitmapRect(bool highlight_guessed, uint xfrom, uint xto, uint yfrom, uint yto, uint bitmapRenderID) {
-		uint width = S.get_width();
-		uint height = S.get_height();
-		uint screenWidth = S.get_screenWidth();
-		uint screenHeight = S.get_screenHeight();
-		uint oversampling = S.get_oversampling();
+		uint screenWidth = mP.get_screenWidth();
+		uint screenHeight = mP.get_screenHeight();
+		uint oversampling = mP.get_oversampling();
 		uint samples = oversampling * oversampling;
 
 		assert(xfrom >= 0); assert(xfrom <= screenWidth);
@@ -348,7 +542,7 @@ public:
 						sumB += getBValue(color);
 					}
 				
-					ptPixels[screenWidth * (screenHeight - py - 1) + px] = rgb(
+					ptPixels[pixelIndex_of_pixelXY(px, py)] = rgb(
 						(uint8)(sumR / samples),
 						(uint8)(sumG / samples),
 						(uint8)(sumB / samples)
@@ -378,7 +572,7 @@ public:
 						sumB += getBValue(color);
 					}
 				
-					ptPixels[screenWidth * (screenHeight - py - 1) + px] = rgb(
+					ptPixels[pixelIndex_of_pixelXY(px, py)] = rgb(
 						(uint8)(sumR / samples),
 						(uint8)(sumG / samples),
 						(uint8)(sumB / samples)
@@ -393,14 +587,14 @@ public:
 	}
 
 	void renderBitmapFull(bool highlight_guessed, bool multithreading, uint bitmapRenderID) {
-		uint screenWidth = S.get_screenWidth();
-		uint screenHeight = S.get_screenHeight();
+		uint screenWidth = mP.get_screenWidth();
+		uint screenHeight = mP.get_screenHeight();
 
-		lock_guard<mutex> guard(renderingBitmap);
 		//use multithreading for extra speed when there's no render active
 		if (multithreading) {
 			if(debug) cout << "using multiple threads for renderBitmapFull" << endl;
 			uint tiles = (uint)(sqrt(number_of_threads)); //the number of tiles in both horizontal and vertical direction, so in total there are (tiles * tiles)
+			tiles = min({tiles, screenWidth, screenHeight});
 
 			uint widthStep = screenWidth / tiles;
 			uint heightStep = screenHeight / tiles;
@@ -430,43 +624,175 @@ public:
 		else {
 			if(debug) cout << "using 1 thread for renderBitmapFull" << endl;
 			renderBitmapRect(highlight_guessed, 0, screenWidth, 0, screenHeight, bitmapRenderID);
-		}
+		}	
 	}
 
-	void createNewBitmapRender(bool headless, bool highlight_guessed) {
-		if(debug) cout << "enters renderBitmapFull" << endl;
-		int bitmapRenderID;
-		{
-			lock_guard<mutex> guard(renderingBitmap);
-			bitmapRenderID = ++lastBitmapRenderID;
-			activeBitmapRenders++;
-		}
-		if(debug) cout << "performing bitmap render " << bitmapRenderID << endl;
 
-		if (headless) {
-			renderBitmapFull(highlight_guessed, true, bitmapRenderID);
-			{
-				lock_guard<mutex> guard(renderingBitmap);
-				activeBitmapRenders--;
+
+	void createNewRender(uint renderID)
+	{
+		/*
+			This macro generates calls of createNewRenderTemplated for every possible combination of julia and using_avx.
+			There's a check whether the procedure has a julia or avx version before an attempt is made to use it. For example, if S_().get_julia() is true, procedure.hasJuliaVersion determines whether a julia version is actually used. It overrides the setting.
+		*/
+		#define procedureRenderCase(procedure_identifier) \
+			case procedure_identifier: { \
+				constexpr Procedure procedure = getProcedureObject(procedure_identifier); \
+				if (using_avx) { \
+					if (mP.get_julia()) \
+						createNewRenderTemplated<procedure_identifier, procedure.hasAvxVersion, procedure.hasJuliaVersion>(renderID); \
+					else \
+						createNewRenderTemplated<procedure_identifier, procedure.hasAvxVersion, false>(renderID); \
+				} \
+				else { \
+					if (mP.get_julia()) \
+						createNewRenderTemplated<procedure_identifier, false, procedure.hasJuliaVersion>(renderID); \
+					else \
+						createNewRenderTemplated<procedure_identifier, false, false>(renderID); \
+				} \
+				break; \
 			}
+
+		if(debug) {
+			int procedure_identifier = mP.get_procedure_identifier();
+			assert(procedure_identifier == mP.get_procedure().id);
+			cout << "creating new render with procedure: " << procedure_identifier << " (" << mP.get_procedure().name() << ")" << " and ID " << renderID << endl;
 		}
-		else {
-			thread refreshThread(&FractalCanvas::refreshDuringBitmapRender, this, bitmapRenderID);
-			bool multithreading = activeRenders == 0;
-			renderBitmapFull(highlight_guessed, multithreading, bitmapRenderID);
+
+		switch (mP.get_procedure_identifier()) {
+			procedureRenderCase(M2.id)
+			procedureRenderCase(M3.id)
+			procedureRenderCase(M4.id)
+			procedureRenderCase(M5.id)
+			procedureRenderCase(M512.id)
+			procedureRenderCase(BURNING_SHIP.id)
+			procedureRenderCase(CHECKERS.id)
+			procedureRenderCase(TRIPLE_MATCHMAKER.id)
+			procedureRenderCase(HIGH_POWER.id)
+			procedureRenderCase(RECURSIVE_FRACTAL.id)
+			procedureRenderCase(PURE_MORPHINGS.id)
+		}
+
+		#undef procedureRenderCase
+	}
+
+	void createNewRender() {
+		createNewRender(++lastRenderID);
+	}
+
+	//
+	// There can be multiple threads waiting to start if the user scrolls very fast and many renders per second are started and have to be cancelled again. To deal with that situation, this function places all new renders in a queue by using the mutex activeRender.
+	// In addition, the mutex renderInfo is used to protect the variables that keep information about the number of renders, the last render ID etc.
+	//
+	void enqueueRender(bool new_thread = true)
+	{
+		auto action = [this](uint renderID)
+		{
 			{
-				lock_guard<mutex> guard(renderingBitmap);
-				activeBitmapRenders--;
-			}
-			{
-				lock_guard<mutex> guard(drawingBitmap);
-				if (lastBitmapRenderID == bitmapRenderID) {
-					bitmapManager->draw();
+				lock_guard<mutex> guard(activeRender);
+				//if here, it's this thread's turn
+				{
+					lock_guard<mutex> guard(genericMutex);
+					bool newerRenderExists = lastRenderID > renderID;
+
+					if (newerRenderExists)
+					{
+						if(debug) cout << "not starting render " << renderID << " as there's a newer render with ID " << lastRenderID << endl;
+						renderQueueSize--;
+						return;
+					}
+					else {
+						activeRenders++;
+					}
+				}
+				if(debug) cout << "starting render with ID " << renderID << endl;
+				createNewRender(renderID);
+				{
+					lock_guard<mutex> guard(genericMutex);
+					activeRenders--;
+					renderQueueSize--;
 				}
 			}
-			refreshThread.join();
+			//After releasing the lock on activeRender, nothing should be done that uses the FractalCanvas. When the user closes a tab during a render, the FractalCanvas gets destroyed immediately after the lock is released.
+		};
+
+		uint renderID;
+
+		//update values to reflect that there's a new render
+		{
+			lock_guard<mutex> guard(genericMutex);
+			renderQueueSize++;
+			renderID	 = ++lastRenderID;
 		}
+
+		//actually start the render
+		if (new_thread)
+			thread(action, renderID).detach();
+		else
+			action(renderID);
 	}
+
+
+	void createNewBitmapRender(bool highlight_guessed, uint bitmapRenderID)
+	{
+		bitmapRenderStartedEvent(bitmapRenderID);
+		renderBitmapFull(highlight_guessed, true, bitmapRenderID);
+		bitmapRenderFinishedEvent(bitmapRenderID);
+	}
+
+	void createNewBitmapRender(bool highlight_guessed) {
+		createNewBitmapRender(highlight_guessed, ++lastBitmapRenderID);
+	}
+
+	void enqueueBitmapRender(bool new_thread = true, bool highlight_guessed = false)
+	{
+		auto action = [this, highlight_guessed](uint bitmapRenderID)
+		{
+			{
+				lock_guard<mutex> guard(activeBitmapRender);
+				//if here, it's this thread's turn
+				{
+					lock_guard<mutex> guard(genericMutex);
+					bool newerRenderExists = lastBitmapRenderID > bitmapRenderID;
+
+					if (newerRenderExists)
+					{
+						if(debug) cout << "not starting bitmap render " << bitmapRenderID << " as there's a newer bitmap render with ID " << lastBitmapRenderID << endl;
+						bitmapRenderQueueSize--;
+						return;
+					}
+					else {
+						activeBitmapRenders++;
+					}
+				}
+				if(debug) cout << "starting bitmap render with ID " << bitmapRenderID << endl;
+				createNewBitmapRender(highlight_guessed, bitmapRenderID);
+				{
+					lock_guard<mutex> guard(genericMutex);
+					activeBitmapRenders--;
+					bitmapRenderQueueSize--;
+				}
+			}
+			//After releasing the lock on activeBitmapRender, nothing should be done that uses the FractalCanvas. When the user closes a tab during a bitmap render, the FractalCanvas gets destroyed immediately after the lock is released.
+		};
+
+		uint bitmapRenderID;
+
+		//update values to reflect that there's a new render
+		{
+			lock_guard<mutex> guard(genericMutex);
+			bitmapRenderQueueSize++;
+			bitmapRenderID = ++lastBitmapRenderID;
+		}
+
+		//actually start the render
+		if (new_thread)
+			thread(action, bitmapRenderID).detach();
+		else
+			action(bitmapRenderID);
+	}
+	
 };
+
 
 #endif

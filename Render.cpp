@@ -21,14 +21,20 @@ constexpr bool GUESSED = true;
 
 
 /*
-	Escape radius squared for Mandelbrot power n is: pow(2, 1/(n-1))
+	Escape radius for Mandelbrot power n is: pow(2, 1/(n-1))
 	Squared that's pow(2, 2/(n-1)). Using the squared esacape radius is more efficient for calculations.
 
-	cardioidRadius is the radius of the largest circle that fits within the cardioid. Checking if a pixel lies within that circle saves having to iterate. This matters especially for high power Mandelbrot sets, which are nearly a circle.
+	cardioidRadius is the radius of the largest circle that fits within the cardioid. Checking if a pixel lies within that circle saves having to iterate. This helps especially for unzoomed high power Mandelbrot sets, which are nearly a circle.
 */
 template <int power>
-struct MandelbrotFormula {
-	static constexpr double escapeRadiusSq = gcem::pow(2, 2.0 / power);
+struct MandelbrotFormula
+{
+	static constexpr double escapeRadiusSq = ([]()
+	{
+		static_assert(power != 1, "Mandelbrot power can't be 1.");
+		return gcem::pow(2, 2.0 / (power-1));
+	})();
+
 	static constexpr double cardioidRadius =
 		gcem::pow(
 			1.0/power
@@ -38,21 +44,24 @@ struct MandelbrotFormula {
 			1.0/power
 			, power/(power-1.0)
 		);
+
 	static bool withinCardioidRadius(double_c c) {
 		return abs(c) < cardioidRadius;
 	}
+
 	static inline double_c apply(double_c z, double_c c) {
 		return pow(z, power) + c;
 	}
 };
 
 template <int procedure_identifier>
-struct EscapeTimeFormula {
+struct EscapeTimeFormula
+{
 	static constexpr double escapeRadiusSq = ([]()
 	{
 		constexpr Procedure procedure = getProcedureObject(procedure_identifier);
 
-		if (procedure.procedureClass == ProcedureClass::Mandelbrot)
+		if (procedure.kind == ProcedureKind::Mandelbrot)
 		{
 			return MandelbrotFormula<procedure.inflectionPower>::escapeRadiusSq;
 		}
@@ -61,8 +70,7 @@ struct EscapeTimeFormula {
 			return 4.0;
 		}
 		else {
-			assert(false);
-			return 4.0;
+			return 4.0; //This value is intended not to be used.
 		}
 	})();
 
@@ -70,7 +78,7 @@ struct EscapeTimeFormula {
 	{
 		constexpr Procedure procedure = getProcedureObject(procedure_identifier);
 
-		if (procedure.procedureClass == ProcedureClass::Mandelbrot)
+		if (procedure.kind == ProcedureKind::Mandelbrot)
 		{
 			return MandelbrotFormula<procedure.inflectionPower>::apply(z,c);
 		}
@@ -94,16 +102,16 @@ Render holds a reference to the FractalCanvas that created it to have access to 
 The idea behind the template is that the compiler will optimize everything away that is not used, given specific values for the parameters. For example, in isSameHorizontalLine it says "if (procedure.guessable)". If procedure.guessable is false, it says "if (false)", so the whole function definition can be recuced to "return false", which will lead to optimizations wherever the function is used as well, because the return value is known at compile time. Also for example in calcPoint there are many ifs 
 */
 template <int procedure_identifier, bool use_avx, bool julia>
-class Render {
+class Render : public RenderInterface {
 public:
-	const uint renderID;
 	FractalCanvas& canvas;
+	const uint renderID;
 	static constexpr Procedure procedure = getProcedureObject(procedure_identifier); //this value is known at compile time
 
-	//some widely used members of canvas.S
+	//some widely used members of canvas.P
 	const vector<double_c>& inflectionCoords;
-	const uint width;
-	const uint height;
+	const uint width;			uint getWidth() { return width; }
+	const uint height;			uint getHeight() { return height; }
 	const uint screenWidth;
 	const uint screenHeight;
 	const uint oversampling;
@@ -112,37 +120,30 @@ public:
 	const uint inflectionCount;
 	
 	//other
-	uint usedThreads; //counts the total number of threads created
-	uint threadCount;
+	uint usedThreads{ 0 }; //counts the total number of threads created
+	uint threadCount{ 0 };
 	chrono::time_point<chrono::high_resolution_clock> startTime;
 	chrono::time_point<chrono::high_resolution_clock> endTime;
-	bool isFinished;
-	uint64 guessedPixelCount;
-	uint64 calculatedPixelCount;
-	uint64 pixelGroupings;
-	uint64 computedIterations;
+	bool ended{ false };
+	uint64 guessedPixelCount{ 0 };
+	uint64 calculatedPixelCount{ 0 };
+	uint64 pixelGroupings{ 0 };
+	uint64 computedIterations{ 0 };
 
-	Render(FractalCanvas& canvasContext, int renderID)
+	Render(FractalCanvas& canvasContext, uint renderID)
 	: canvas(canvasContext)
 	, renderID(renderID)
-	, inflectionCoords(canvas.S.get_inflectionCoords())
-	, width(canvas.S.get_width())
-	, height(canvas.S.get_height())
-	, screenWidth(canvas.S.get_screenWidth())
-	, screenHeight(canvas.S.get_screenHeight())
-	, oversampling(canvas.S.get_oversampling())
-	, juliaSeed(canvas.S.juliaSeed)
-	, maxIters(canvas.S.get_maxIters())
-	, inflectionCount(canvas.S.get_inflectionCount())
+	, inflectionCoords(canvas.P().get_inflectionCoords())
+	, width(canvas.P().get_width())
+	, height(canvas.P().get_height())
+	, screenWidth(canvas.P().get_screenWidth())
+	, screenHeight(canvas.P().get_screenHeight())
+	, oversampling(canvas.P().get_oversampling())
+	, juliaSeed(canvas.P().get_juliaSeed())
+	, maxIters(canvas.P().get_maxIters())
+	, inflectionCount(canvas.P().get_inflectionCount())
 	{
 		if(debug) cout << "creating render " << renderID << endl;
-		threadCount = 0;
-		usedThreads = 0;
-		pixelGroupings = 0;
-		guessedPixelCount = 0;
-		calculatedPixelCount = 0;
-		computedIterations = 0;
-		isFinished = false;
 	}
 
 	~Render(void) {
@@ -194,20 +195,20 @@ public:
 	*/
 	inline double_c map_with_transformations(uint x, uint y) {
 		return
-			canvas.S.post_transformation(
+			canvas.P().post_transformation(
 			inflections(
-			canvas.S.pre_transformation(
-			canvas.S.rotation(
-			canvas.S.map(x, y)))));
+			canvas.P().pre_transformation(
+			canvas.P().rotation(
+			canvas.P().map(x, y)))));
 	}
 
 	inline double_c map_with_transformations_m2(uint x, uint y) {
 		return
-			canvas.S.post_transformation(
+			canvas.P().post_transformation(
 			inflections_m2(
-			canvas.S.pre_transformation(
-			canvas.S.rotation(
-			canvas.S.map(x, y)))));
+			canvas.P().pre_transformation(
+			canvas.P().rotation(
+			canvas.P().map(x, y)))));
 	}
 
 	uint calcPoint(uint x, uint y) {
@@ -289,13 +290,7 @@ public:
 			else {
 				c = map_with_transformations(x, y);
 				z = 0;
-				if (	
-					procedure_identifier == M3.id
-					|| procedure_identifier == M4.id
-					|| procedure_identifier == M5.id
-					|| procedure_identifier == M512.id
-					|| procedure_identifier == HIGH_POWER.id
-				) {
+				if (	procedure.kind == ProcedureKind::Mandelbrot) {
 					//This is a Mandelbrot formula. It can be checked whether c is within the largest circle within the cardioid:
 					constexpr int power = procedure.inflectionPower;
 
@@ -463,9 +458,9 @@ public:
 		}
 		if (procedure_identifier == PURE_MORPHINGS.id) {
 			double_c c = 
-				canvas.S.pre_transformation(
-				canvas.S.rotation(
-				canvas.S.map(x, y)));
+				canvas.P().pre_transformation(
+				canvas.P().rotation(
+				canvas.P().map(x, y)));
 
 			//This uses the inflections to determine the iterationCount. Does the pixel escape during inflection application?
 			//More efficient inflection application just for Mandelbrot power 2
@@ -500,86 +495,7 @@ public:
 			canvas.setPixel(x, y, iterationCount, CALCULATED, false);
 			return iterationCount;
 		}
-		if (procedure_identifier == BI.id) {
-			double_c c = map_with_transformations_m2(x, y);
-			
-			auto insideBox = [](box& box, double_c c) {
-				double cr = real(c);
-				double ci = imag(c);
-				return (
-					cr >= box.xfrom
-					&& cr <= box.xto
-					&& ci >= box.yfrom
-					&& ci <= box.yto
-				);
-			};
 
-			double axisThickness = 0.005;
-
-			box yaxis;
-			yaxis.xfrom = 0;
-			yaxis.xto = yaxis.xfrom + axisThickness;
-			yaxis.yfrom = 0;
-			yaxis.yto = 1;
-
-			box xaxis;
-			xaxis.xfrom = 0;
-			xaxis.xto = 1;
-			xaxis.yfrom = 0;
-			xaxis.yto = xaxis.yfrom + axisThickness;
-
-			double spacing = 0.02;
-			double thickness = 0.2;
-			int barcount = 4;
-			vector<box> bars(barcount);
-			for (int i=0; i<barcount; i++) {
-				bars[i].xfrom = yaxis.xto + spacing + (i == 0 ? 0 : bars[i-1].xto);
-				bars[i].xto = bars[i].xfrom + thickness;
-				bars[i].yfrom = yaxis.yfrom;
-			}
-			
-			switch (canvas.S.BI_choice) {
-				case BI_choices::DEPARTMENT_IT: {
-					bars[0].yto = 0.6;
-					bars[1].yto = 0.7;
-					bars[2].yto = 0.2;
-					bars[3].yto = 0.9;
-					break;
-				}
-				case BI_choices::DEPARTMENT_MT: {
-					bars[0].yto = 0.1;
-					bars[1].yto = 0.2;
-					bars[2].yto = 0.4;
-					bars[3].yto = 0.6;
-					break;
-				}
-				case BI_choices::DEPARTMENT_RND: {
-					bars[0].yto = 0.9;
-					bars[1].yto = 0.7;
-					bars[2].yto = 0.8;
-					bars[3].yto = 0.7;
-					break;
-				}
-				case BI_choices::DEPARTMENT_SALES: {
-					bars[0].yto = 0.5;
-					bars[1].yto = 0.8;
-					bars[2].yto = 0.3;
-					bars[3].yto = 0.3;
-					break;
-				}
-			}
-
-			iterationCount = 3;
-			if (insideBox(yaxis, c) || insideBox(xaxis, c))
-				iterationCount = 1;
-			else {
-				for (int i=0; i<barcount; i++) {
-					if (insideBox(bars[i], c))
-						iterationCount = 2;
-				}
-			}
-			
-		}
 		canvas.setPixel(x, y, iterationCount, CALCULATED, iterationCount == maxIters);
 
 		return iterationCount;
@@ -605,8 +521,10 @@ public:
 	inline bool calcPointVectorAVX_M2(vector<point>& points, uint fromPoint, uint toPoint) {
 		//AVX for Mandelbrot power 2
 		//AVX is used. Length 4 arrays and vectors are constructed to iterate 4 pixels at once. That means 4 x-values, 4 y-values, 4 c-values etc.
-		int thisIter = -1;
-		bool isSame = true;
+		__m256d all_true = _mm256_cmp_pd(_mm256_setzero_pd(), _mm256_setzero_pd(), _CMP_EQ_OS);
+
+		uint thisIter = -1;
+		bool isSame = true; //whether all iteration counts of the pixels in this vector are the same
 
 		uint x[4] = {
 			points[fromPoint].x
@@ -640,16 +558,17 @@ public:
 		//double versions of the vector variables, used to iterate pixels individually:
 		double crd, cid, zrd, zid, zrsqrd, zisqrd;
 
-		__m256d bailout_v = _mm256_set1_pd(4.0);
+		__m256d bailout_v = _mm256_set1_pd(MandelbrotFormula<2>::escapeRadiusSq);
 		__m256d zisqr_plus_zrsqr_v = _mm256_setzero_pd();
-		__m256d pixel_has_escaped_v;
+		__m256d pixel_has_escaped_v = _mm256_setzero_pd();
+		double* bailout_p = (double*)&bailout_v;
+		double* zisqr_plus_zrsqr_p = (double*)&zisqr_plus_zrsqr_v;
 		bool* pixel_has_escaped_p = (bool*)&pixel_has_escaped_v;
-		__m256d all_true = _mm256_cmp_pd(_mm256_setzero_pd(), _mm256_setzero_pd(), _CMP_EQ_OS);
 
 		double julia_r;
 		double julia_i;
 
-		//note that the order here is different from the arrays x, y and c. Apparently _mm256_set_pd fills the vector in opposite order?
+		//note that the order here is different from the arrays x, y and c. Apparently _mm256_set_pd fills the vector in opposite order.
 		if (julia) {
 			julia_r = real(juliaSeed);
 			julia_i = imag(juliaSeed);
@@ -660,8 +579,16 @@ public:
 			zi = _mm256_set_pd(imag(c[3]), imag(c[2]), imag(c[1]), imag(c[0]));
 			zrsqr = _mm256_mul_pd(zr, zr);
 			zisqr = _mm256_mul_pd(zi, zi);
+
+			//Julia can escape with 0 iterations (if z_0 = c is already larger than the escape radius).
+			zisqr_plus_zrsqr_v = _mm256_add_pd(zrsqr, zisqr);
+
+			pixel_has_escaped_v = _mm256_xor_pd(
+				_mm256_cmp_pd(zisqr_plus_zrsqr_v, bailout_v, _CMP_LE_OQ)
+				,all_true //xor with this is required to interpret comparison with NaN as true. When there's a NaN I consider that pixel escaped.
+			);
 		}
-		else {
+		else { //Mandelbrot
 			cr = _mm256_set_pd(real(c[3]), real(c[2]), real(c[1]), real(c[0]));
 			ci = _mm256_set_pd(imag(c[3]), imag(c[2]), imag(c[1]), imag(c[0]));
 			zr = _mm256_setzero_pd();
@@ -672,24 +599,7 @@ public:
 
 		bool continue_avx_iteration = true;
 
-		while (continue_avx_iteration) {
-			zi = _mm256_mul_pd(zr, zi);
-			zi = _mm256_add_pd(zi, zi);
-			zi = _mm256_add_pd(zi, ci);
-			zr = _mm256_add_pd(_mm256_sub_pd(zrsqr, zisqr), cr);
-			zrsqr = _mm256_mul_pd(zr, zr);
-			zisqr = _mm256_mul_pd(zi, zi);
-			zisqr_plus_zrsqr_v = _mm256_add_pd(zrsqr, zisqr);
-
-			for (int m = 0; m < 4; m++) {
-				iterationCounts[m]++;
-			}
-
-			pixel_has_escaped_v = _mm256_xor_pd(
-				_mm256_cmp_pd(zisqr_plus_zrsqr_v, bailout_v, _CMP_LE_OQ)
-				, all_true //xor with this is required to interpret comparison with NaN as true. When there's a NaN I consider that pixel escaped.
-			);
-
+		while (true) {
 			if (
 				pixel_has_escaped_p[0]
 				|| pixel_has_escaped_p[8] //Indices are multiplied by 8 because the bool values in pixel_has_escaped_p are stored as doubles which are 8 bytes long:
@@ -699,7 +609,7 @@ public:
 				|| iterationCounts[1] >= maxIters
 				|| iterationCounts[2] >= maxIters
 				|| iterationCounts[3] >= maxIters
-				) {
+			) {
 				//when here, one of the pixels has escaped or exceeded the max number of iterations
 
 				for (int k = 0; k < 4; k++) { //for each pixel in the AVX vector
@@ -721,8 +631,6 @@ public:
 
 								//verify that this pixel is valid:
 								if (julia) {
-									pixelIsValid = true;
-
 									iterationCounts[k] = 0;
 									crp[k] = julia_r;
 									cip[k] = julia_i;
@@ -730,6 +638,17 @@ public:
 									zip[k] = imag(c[k]);
 									zrsqrp[k] = zrp[k] * zrp[k];
 									zisqrp[k] = zip[k] * zip[k];
+
+									zisqr_plus_zrsqr_p[k] = zrsqrp[k] + zisqrp[k];
+
+									if (zisqr_plus_zrsqr_p[k] > bailout_p[0]) {
+										//julia escaped at 0 iterations
+										setPixelAndThisIter(x[k], y[k], 0, CALCULATED, false);
+										pixelIsValid = false;
+									}
+									else {
+										pixelIsValid = true;
+									}
 								}
 								else {
 									double zx = real(c[k]);
@@ -776,6 +695,26 @@ public:
 					}
 				}
 			}
+
+			if (continue_avx_iteration) {
+				zi = _mm256_mul_pd(zr, zi);
+				zi = _mm256_add_pd(zi, zi);
+				zi = _mm256_add_pd(zi, ci);
+				zr = _mm256_add_pd(_mm256_sub_pd(zrsqr, zisqr), cr);
+				zrsqr = _mm256_mul_pd(zr, zr);
+				zisqr = _mm256_mul_pd(zi, zi);
+				zisqr_plus_zrsqr_v = _mm256_add_pd(zrsqr, zisqr);
+
+				for (int m = 0; m < 4; m++) {
+					iterationCounts[m]++;
+				}
+
+				pixel_has_escaped_v = _mm256_xor_pd(
+					_mm256_cmp_pd(zisqr_plus_zrsqr_v, bailout_v, _CMP_LE_OQ)
+					,all_true
+				);
+			}
+			else break;
 		}
 
 		//Finish iterating the remaining 3 or fewer pixels without AVX:
@@ -803,6 +742,8 @@ public:
 		return isSame;
 	}
 #pragma GCC pop_options
+	
+	#undef setPixelAndThisIter
 
 	/*
 		including fromPoint; not including toPoint
@@ -819,7 +760,6 @@ public:
 
 		uint pointCount = toPoint - fromPoint;
 		bool isSame = true;
-		int thisIter = -1;
 
 		if (!use_avx || procedure_identifier != M2.id || pointCount < 4) {
 			uint thisX = points[fromPoint].x;
@@ -1089,7 +1029,6 @@ public:
 			assert(xfrom <= xto);
 			assert(yfrom <= yto);
 			
-			//if(debug) cout << "taking bitmap render responsibility for (xfrom, xto, yfrom, yto): (" << xfrom << ", " << xto << ", " << yfrom << ", " << yto << endl;
 			canvas.renderBitmapRect(false, xfrom, xto, yfrom, yto, canvas.lastBitmapRenderID);
 		}
 		
@@ -1113,7 +1052,6 @@ public:
 		uint tiles = (uint)(sqrt(canvas.number_of_threads)); //the number of tiles in both horizontal and vertical direction, so in total there are (tiles * tiles)
 
 		//It can happen that there are too many tiles with a high number of threads and a low resolution. The tiles should contain at least one point within their borders. The number of tiles is reduced accordingly, if needed. Because of the restriction, 3x3 is the smallest resolution that this tiling algorithm works for.
-		//tiles = min(tiles, min((width - 1)/2, (height-1)/2));
 		tiles = min({tiles, (width - 1)/2, (height-1)/2});
 		if (tiles == 0) {
 			cout << "No render takes place. The tiling algorithm only works with a resolution of at least 3x3." << endl;
@@ -1234,7 +1172,7 @@ public:
 
 	double getElapsedTime() {
 		chrono::duration<double> elapsed;
-		if (!isFinished) {
+		if (!ended) {
 			auto now = chrono::high_resolution_clock::now();
 			elapsed = now - startTime;
 		}
@@ -1247,9 +1185,8 @@ public:
 	void execute() {
 		assert(width > 0);
 		assert(height > 0);
+		assert( ! ended);
 		cout << "in execute " << renderID << endl;
-
-		lock_guard<mutex> guard(renders);
 
 		if (renderID != canvas.lastRenderID)
 			return;
@@ -1257,13 +1194,25 @@ public:
 		startTime = chrono::high_resolution_clock::now();
 		renderSilverFull();
 		endTime = chrono::high_resolution_clock::now();
-		isFinished = true;
+		ended = true;
 
 		for (uint i = 0; i < width; i++) {
 			for (uint j = 0; j < height; j++) {
 				computedIterations += canvas.iters[i*height + j].iterationCount();
 			}
 		}
+	}
+	
+	ProgressInfo getProgress() {
+		return { guessedPixelCount, calculatedPixelCount, getElapsedTime(), ended };
+	}
+
+	void* canvasPtr() {
+		return canvas.voidPtr();
+	}
+
+	uint getId() {
+		return renderID;
 	}
 };
 
