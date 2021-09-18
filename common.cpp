@@ -5,10 +5,13 @@
 #include <iostream>
 #include <string>
 #include <vector>
+#include <array>
 #include <cassert>
 #include <complex>
 #include <mutex>
 #include <cstdint>
+#include <chrono>
+#include <thread>
 
 #ifndef NDEBUG
 constexpr bool debug = true;
@@ -33,21 +36,27 @@ typedef uint32_t ARGB;
 typedef std::complex<double> double_c;
 constexpr double_c I(0, 1);
 constexpr double pi = 3.1415926535897932384626433832795;
+string to_string(double_c c, std::streamsize precision = 5, bool fixed_ = true) {
+	stringstream ss;
+	if (fixed_) ss << fixed;
+	ss << setprecision(precision) << real(c) << " + " << imag(c) << "i";
+	return ss.str();
+}
 
 //Constants
-constexpr double PROGRAM_VERSION = 8.1;
+constexpr double PROGRAM_VERSION = 9.0;
 constexpr uint NUMBER_OF_TRANSFORMATIONS = 7 + 1;
 constexpr uint MAXIMUM_TILE_SIZE = 50; //tiles in renderSilverRect smaller than this do not get subdivided.
 constexpr uint NEW_TILE_THREAD_MIN_PIXELS = 8; //For tiles with a width or height in PIXELS smaller than this no new threads are created, which has two reasons: 1. thread overhead; 2. See the explanation of stop_creating_threads in the function Render::renderSilverRect.
-int BI_CHOICE; //easter egg
 
-//I wonder if it's good to have global mutexes while using multiple instances of FractalCanvas. It makes no sense that one fractalcanvas can't resize while another one is rendering, for example, although multiple renders at once is questionable.
+//Global variables
+unsigned int NUMBER_OF_THREADS;
+bool using_avx = false;
+
 mutex threadCountChange;
-mutex renders;
 mutex drawingBitmap;
-mutex renderingBitmap;
 
-namespace ProcedureClass {
+namespace ProcedureKind {
 	enum {
 		Mandelbrot
 		,Other
@@ -55,7 +64,6 @@ namespace ProcedureClass {
 }
 
 struct Procedure {
-
 	/*
 		from https://stackoverflow.com/a/37876799
 		This struct is a string-like type that can be declared as a constexpr. This is needed to be able to declare a Formula, which contains a name, as constexpr. I want to do that because procedure properties are constant values known at compile time.
@@ -76,13 +84,13 @@ struct Procedure {
 	int id;
 	bool guessable;
 	int inflectionPower;
-	constexpr_str name_;
+	constexpr_str name_dont_use; //use the name() function to get the name
 	bool hasJuliaVersion;
 	bool hasAvxVersion;
-	int procedureClass;
+	int kind;
 
 	string name() {
-		return string(name_.str);
+		return string(name_dont_use.str);
 	}
 };
 
@@ -102,19 +110,18 @@ struct Procedure {
 */
 //                                      id   guessable inflection-  name                    hasJulia-  hasAvx-    procedureClass
 //                                                      Power                                 Version    Version
-constexpr Procedure NOT_FOUND =         {-1,  false,   -1,          "Procedure not found",  false,     false,     ProcedureClass::Other };
-constexpr Procedure M2 =                { 4,  true,     2,          "Mandelbrot power 2",   true,      true,      ProcedureClass::Mandelbrot };
-constexpr Procedure BURNING_SHIP =      { 5,  false,    2,          "Burning ship",         true,      false,     ProcedureClass::Other };
-constexpr Procedure M3 =                { 6,  true,     3,          "Mandelbrot power 3",   true,      false,     ProcedureClass::Mandelbrot };
-constexpr Procedure M4 =                { 7,  true,     4,          "Mandelbrot power 4",   true,      false,     ProcedureClass::Mandelbrot };
-constexpr Procedure M5 =                { 8,  true,     5,          "Mandelbrot power 5",   true,      false,     ProcedureClass::Mandelbrot };
-constexpr Procedure TRIPLE_MATCHMAKER = { 11, true,     2,          "Triple Matchmaker",    true,      false,     ProcedureClass::Other };
-constexpr Procedure CHECKERS =          { 12, true,     2,          "Checkers",             false,     false,     ProcedureClass::Other };
-constexpr Procedure HIGH_POWER =        { 13, true,     33554432,   "High power Mandelbrot",true,      false,     ProcedureClass::Mandelbrot };
-constexpr Procedure RECURSIVE_FRACTAL = { 15, true,     2,          "Recursive Fractal",    false,     false,     ProcedureClass::Other };
-constexpr Procedure BI =                { 16, true,     2,          "Business Intelligence",false,     false,     ProcedureClass::Other };
-constexpr Procedure PURE_MORPHINGS =    { 17, true,     2,          "Pure Julia morphings", false,     false,     ProcedureClass::Other };
-constexpr Procedure M512 =              { 18, true,     512,        "Mandelbrot power 512", true,      false,     ProcedureClass::Mandelbrot };
+constexpr Procedure NOT_FOUND =         {-1,  false,   -1,          "Procedure not found",  false,     false,     ProcedureKind::Other };
+constexpr Procedure M2 =                { 4,  true,     2,          "Mandelbrot power 2",   true,      true,      ProcedureKind::Mandelbrot };
+constexpr Procedure BURNING_SHIP =      { 5,  false,    2,          "Burning ship",         true,      false,     ProcedureKind::Other };
+constexpr Procedure M3 =                { 6,  true,     3,          "Mandelbrot power 3",   true,      false,     ProcedureKind::Mandelbrot };
+constexpr Procedure M4 =                { 7,  true,     4,          "Mandelbrot power 4",   true,      false,     ProcedureKind::Mandelbrot };
+constexpr Procedure M5 =                { 8,  true,     5,          "Mandelbrot power 5",   true,      false,     ProcedureKind::Mandelbrot };
+constexpr Procedure TRIPLE_MATCHMAKER = { 11, true,     2,          "Triple Matchmaker",    true,      false,     ProcedureKind::Other };
+constexpr Procedure CHECKERS =          { 12, true,     2,          "Checkers",             false,     false,     ProcedureKind::Other };
+constexpr Procedure HIGH_POWER =        { 13, true,     33554432,   "High power Mandelbrot",true,      false,     ProcedureKind::Mandelbrot };
+constexpr Procedure RECURSIVE_FRACTAL = { 15, true,     2,          "Recursive Fractal",    false,     false,     ProcedureKind::Other };
+constexpr Procedure PURE_MORPHINGS =    { 17, true,     2,          "Pure Julia morphings", false,     false,     ProcedureKind::Other };
+constexpr Procedure M512 =              { 18, true,     512,        "Mandelbrot power 512", true,      false,     ProcedureKind::Mandelbrot };
 
 constexpr Procedure getProcedureObject(int id) {
 	switch (id) {
@@ -127,13 +134,27 @@ constexpr Procedure getProcedureObject(int id) {
 		case TRIPLE_MATCHMAKER.id: return TRIPLE_MATCHMAKER;
 		case HIGH_POWER.id:        return HIGH_POWER;
 		case RECURSIVE_FRACTAL.id: return RECURSIVE_FRACTAL;
-		case BI.id:                return BI;
 		case PURE_MORPHINGS.id:    return PURE_MORPHINGS;
 		case M512.id:              return M512;
 	}
 	//not found
 	return NOT_FOUND;
 }
+
+
+// these are the transformations used in FractalParameters::post_transformation and ~pre_transformation
+string transformation_name(int transformation_id)
+{
+	switch(transformation_id) {
+		case 0: return "None";
+		case 1: return "5 Mandelbrot iterations";
+		case 2: return "Cosine";
+		case 4: return "Square root";
+		case 5: return "4th power root";
+		case 6: return "Logarithm";
+	}
+	assert(false); return "";
+};
 
 
 inline ARGB rgb(uint8 r, uint8 g, uint8 b) {
@@ -153,8 +174,9 @@ inline uint8 getBValue(ARGB argb) {
 }
 
 inline ARGB rgbColorAverage(ARGB c1, ARGB c2, double ratio) {
-	assert(ratio >= 0);
-	assert(ratio <= 1);
+	//todo: I had to disable these asserts because they can fail when the parameters are changed during a render, which is fine. However, I'm not sure if it's good design to allow that. Most importantly I want speed. The program should not hang for a long time waiting for renders to cancel.
+	//assert(ratio >= 0);
+	//assert(ratio <= 1);
 	return rgb(
 		(uint8)((getRValue(c1))*(1 - ratio) + (getRValue(c2))*ratio) | 1,
 		(uint8)((getGValue(c1))*(1 - ratio) + (getGValue(c2))*ratio) | 1,
@@ -168,8 +190,42 @@ This class is used in FractalCanvas to avoid depending on the windows api to res
 */
 class BitmapManager {
 public:
-	virtual ARGB* realloc(int newScreenWidth, int newScreenHeight) { assert(false); return (ARGB*)0; }
-	virtual void draw() { assert(false); }
+	virtual ARGB* realloc(uint newScreenWidth, uint newScreenHeight) = 0;
+};
+
+class RenderInterface {
+public:
+	struct ProgressInfo {
+		uint64 guessedPixelCount;
+		uint64 calculatedPixelCount;
+		double elapsedTime;
+		bool ended;
+	};
+	virtual uint getWidth() = 0;
+	virtual uint getHeight() = 0;
+	virtual ProgressInfo getProgress() = 0;
+	virtual void* canvasPtr() = 0;
+	virtual uint getId() = 0;
+};
+
+/*
+	a (programming) interface for the graphical interface
+	Non-GUI classes can request action by the GUI through this interface.
+
+	"Started" means just that: a render has started.
+	"Finished" means that the render was 100% completed. Cancelled renders don't ever finish.
+
+	The int "source_id" is an identifier for the cause / source of the event which the GUI can use to handle it.
+*/
+class GUIInterface {
+public:
+	//virtual void drawBitmap(void* canvas) = 0;
+	virtual void renderStarted(shared_ptr<RenderInterface> render) = 0;
+	virtual void renderFinished(shared_ptr<RenderInterface> render) = 0;
+	virtual void bitmapRenderStarted(void* canvas, uint bitmapRenderID) = 0;
+	virtual void bitmapRenderFinished(void* canvas, uint bitmapRenderID) = 0;
+	virtual void parametersChanged(void* canvas, int source_id) = 0;
+	virtual void canvasSizeChanged(void* canvas) = 0;
 };
 
 struct box {

@@ -2,49 +2,12 @@
 #define WINDOWS_UTIL_H
 
 //windows
-#include <Windowsx.h>
-#include <Windows.h>
-#include <CommCtrl.h>
+#include <windows.h>
 #include <commdlg.h>
 
 //this program
 #include "common.cpp"
 
-HWND WINAPI CreateTrackbar(
-	HWND hwndDlg,  // handle of dialog box (parent window) 
-	UINT selMin,     // minimum value in trackbar range 
-	UINT selMax,     // maximum value in trackbar range
-	int xPos, int yPos,
-	int hSize, int vSize,
-	int id,
-	HINSTANCE hInst)
-{
-	HWND hwndTrack = CreateWindowEx(
-		0,                               // no extended styles 
-		TRACKBAR_CLASS,                  // class name 
-		_T("Trackbar Control"),              // title (caption) 
-		WS_CHILD |
-		WS_VISIBLE |
-		TBS_AUTOTICKS |
-		TBS_ENABLESELRANGE,              // style 
-		xPos, yPos,                          // position 
-		hSize, vSize,                         // size 
-		hwndDlg,                         // parent window 
-		(HMENU)id,                     // control id 
-		hInst,                         // instance 
-		NULL                             // no WM_CREATE parameter 
-	);
-	SendMessage(hwndTrack, TBM_SETRANGE,
-		(WPARAM)TRUE,                   // redraw flag 
-		(LPARAM)MAKELONG(selMin, selMax));  // min. & max. positions
-	SendMessage(hwndTrack, TBM_SETPAGESIZE,
-		0, (LPARAM)4);                  // new page size 
-	SendMessage(hwndTrack, TBM_SETPOS,
-		(WPARAM)TRUE,                   // redraw flag 
-		(LPARAM)selMin);
-	SetFocus(hwndTrack);
-	return hwndTrack;
-}
 
 /*
 	Copied from FolderBrowser.cpp from Kalles Fraktaler: https://code.mathr.co.uk/kalles-fraktaler-2/blob/b8234f690ff44cd3f6af7d90d2c6c44695ccb4f0:/common/FolderBrowser.cpp
@@ -103,62 +66,5 @@ int BrowseFile(HWND hwParent, BOOL bOpen, const char *szTitle, const char *szExt
 			return 0;
 	}
 }
-
-BOOL DrawBitmap(HDC hDC, int x, int y, HBITMAP& hBitmap, DWORD dwROP, int screenWidth, int screenHeight) {
-	if(debug) cout << "drawing" << endl;
-	HDC hDCBits;
-	BOOL bResult;
-	if (!hDC || !hBitmap)
-		return FALSE;
-	hDCBits = CreateCompatibleDC(hDC);
-	SelectObject(hDCBits, hBitmap);
-
-	bResult = BitBlt(hDC, x, y, screenWidth, screenHeight, hDCBits, 0, 0, dwROP);
-
-	DeleteDC(hDCBits);
-	return bResult;
-}
-
-class Win32BitmapManager : public BitmapManager {
-public:
-	ARGB* ptPixels;
-	HBITMAP screenBMP;
-	int screenWidth;
-	int screenHeight;
-	HWND* hWnd;
-
-	Win32BitmapManager() {}
-	Win32BitmapManager(HWND* hWnd) {
-		this->hWnd = hWnd;
-	}
-
-	ARGB* realloc(int newScreenWidth, int newScreenHeight) {
-		DeleteObject(screenBMP);
-		HDC hdc = CreateDCA("DISPLAY", NULL, NULL, NULL);
-		BITMAPINFO RGB32BitsBITMAPINFO;
-		ZeroMemory(&RGB32BitsBITMAPINFO, sizeof(BITMAPINFO));
-		RGB32BitsBITMAPINFO.bmiHeader.biSize = sizeof(BITMAPINFOHEADER);
-		RGB32BitsBITMAPINFO.bmiHeader.biWidth = newScreenWidth;
-		RGB32BitsBITMAPINFO.bmiHeader.biHeight = newScreenHeight;
-		RGB32BitsBITMAPINFO.bmiHeader.biPlanes = 1;
-		RGB32BitsBITMAPINFO.bmiHeader.biBitCount = 32;
-		screenBMP = CreateDIBSection(
-			hdc,
-			(BITMAPINFO*)&RGB32BitsBITMAPINFO,
-			DIB_RGB_COLORS,
-			(void**)&ptPixels,
-			NULL, 0
-		);
-		screenWidth = newScreenWidth;
-		screenHeight = newScreenHeight;
-		return ptPixels;
-	}
-
-	void draw() {
-		HDC hdc = GetDC(*hWnd);
-		DrawBitmap(hdc, 0, 0, screenBMP, SRCCOPY, screenWidth, screenHeight);
-		ReleaseDC(*hWnd, hdc);
-	}
-};
 
 #endif
