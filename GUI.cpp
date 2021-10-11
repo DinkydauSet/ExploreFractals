@@ -1,3 +1,21 @@
+/*
+    ExploreFractals, a tool for testing the effect of Mandelbrot set Julia morphings
+    Copyright (C) 2021  DinkydauSet
+
+    This program is free software: you can redistribute it and/or modify
+    it under the terms of the GNU General Public License as published by
+    the Free Software Foundation, either version 3 of the License, or
+    (at your option) any later version.
+
+    This program is distributed in the hope that it will be useful,
+    but WITHOUT ANY WARRANTY; without even the implied warranty of
+    MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+    GNU General Public License for more details.
+
+    You should have received a copy of the GNU General Public License
+    along with this program.  If not, see <https://www.gnu.org/licenses/>.
+*/
+
 #ifndef EXPLORE_FRACTALS_GUI_H
 #define EXPLORE_FRACTALS_GUI_H
 
@@ -44,17 +62,17 @@ mutex refreshThreads;
 mutex helpwindow_mutex;
 
 namespace EFcolors {
-	color darkblue = color(10, 36, 106);
-	color normal = color(212, 208, 200); //the default boring background color for windows in windows
-	color chromiumblue = color(160, 196, 241);
-	color nearwhite = color(245, 245, 245);
-	color inactivegrey = color(192, 192, 192);
-	color normalgrey = color(128, 128, 128);
+	const color darkblue = color(10, 36, 106);
+	const color normal = color(212, 208, 200); //the default boring background color for windows in windows
+	const color chromiumblue = color(160, 196, 241);
+	const color nearwhite = color(245, 245, 245);
+	const color inactivegrey = color(192, 192, 192);
+	const color normalgrey = color(128, 128, 128);
 
-	color activetab = normal;
-	color activetabtext = colors::black;
-	color inactivetab = nearwhite;
-	color inactivetabtext = colors::black;
+	const color activetab = normal;
+	const color activetabtext = colors::black;
+	const color inactivetab = nearwhite;
+	const color inactivetabtext = colors::black;
 }
 
 namespace EventSource {
@@ -95,20 +113,21 @@ namespace EventSource {
 // A range of numbers starting with WM_APP is reserved for custom messages, so they will never conflict with codes used by microsoft.
 //
 namespace Message {
-	//message									wParam meaning			lParam meaning
+	//message												wParam meaning			lParam meaning
 	
 	//Messages related to the GUIInterface functions:
-	uint RENDER_STARTED =			WM_APP + 1;	//RenderInterface*
-	uint RENDER_FINISHED =			WM_APP + 2;	//RenderInterface*
-	uint BITMAP_RENDER_STARTED =		WM_APP + 3;	//FractalCanvas*			uint* (bitmapRenderID)
-	uint BITMAP_RENDER_FINISHED =	WM_APP + 4;	//FractalCanvas*	
-	uint PARAMETERS_CHANGED =		WM_APP + 5;	//FractalCanvas*			int* (event source id)
-	uint CANVAS_SIZE_CHANGED =		WM_APP + 6;	//FractalCanvas*
+	constexpr uint RENDER_STARTED =				WM_APP + 1;	//RenderInterface*
+	constexpr uint RENDER_FINISHED =				WM_APP + 2;	//RenderInterface*
+	constexpr uint BITMAP_RENDER_STARTED =		WM_APP + 3;	//FractalCanvas*			uint* (bitmapRenderID)
+	constexpr uint BITMAP_RENDER_FINISHED =		WM_APP + 4;	//FractalCanvas*	
+	constexpr uint PARAMETERS_CHANGED =			WM_APP + 5;	//FractalCanvas*			int* (event source id)
+	constexpr uint CANVAS_SIZE_CHANGED =			WM_APP + 6;	//FractalCanvas*
+	constexpr uint CANVAS_RESIZE_FAILED =		WM_APP + 7; //FractalCanvas*
 
 	//other messages
-	uint SHOW_PROGRESS_UNFINISHED =	WM_APP + 7;	//RenderInterface*
-	uint DRAW_BITMAP =				WM_APP + 8;	//FractalCanvas*
-	uint CLEANUP_FRACTAL_TAB =		WM_APP + 9;	//FractalCanvas*
+	constexpr uint SHOW_PROGRESS_UNFINISHED =	WM_APP + 8;	//RenderInterface*
+	constexpr uint DRAW_BITMAP =					WM_APP + 9;	//FractalCanvas*
+	constexpr uint CLEANUP_FRACTAL_TAB =			WM_APP + 10;	//FractalCanvas*
 }
 
 /*
@@ -1051,9 +1070,9 @@ public:
 				if (zoomIn) {
 					rectangle fromPart(
 						xPos - xPos / 4 - offsetX
-						,yPos - yPos / 4 - offsetY,
-						screenWidth / 4,
-						screenHeight / 4
+						,yPos - yPos / 4 - offsetY
+						,screenWidth / 4
+						,screenHeight / 4
 					);
 					rectangle toPart(0, 0, screenWidth, screenHeight);
 					panel_graphics.stretch(fromPart, bitmap_graphics, toPart);
@@ -1107,6 +1126,7 @@ public:
 	void associateFile(string path, string name)
 	{
 		fileAssociation = true;
+		fileModified = false;
 		filePath = path;
 		filename = name;
 	}
@@ -1123,11 +1143,11 @@ public:
 		pl.collocate();
 	}
 
-	FractalCanvas::ResizeResult changeParameters(const FractalParameters& parameters, int source_id = EventSource::fractalPanel)
+	ResizeResult changeParameters(const FractalParameters& parameters, int source_id = EventSource::fractalPanel)
 	{
-		FractalCanvas::ResizeResult res = canvas.changeParameters(parameters, source_id);
+		ResizeResult res = canvas.changeParameters(parameters, source_id);
 
-		if (res.resultType == FractalCanvas::ResizeResultType::Success)
+		if (res.resultType == ResizeResultType::Success)
 		{
 			updateControls();
 		}
@@ -1440,16 +1460,16 @@ public:
 };
 
 
-void handleResizeResult(window wd, FractalCanvas::ResizeResult res)
+void handleResizeResult(window wd, ResizeResult res)
 {
-	if (res.resultType == FractalCanvas::ResizeResultType::OutOfRangeError)
+	if (res.resultType == ResizeResultType::OutOfRangeError)
 	{
 		msgbox mb(wd, "Error", msgbox::ok);
 		mb.icon(mb.icon_error);
 		mb << "Changing the resolution failed: width and/or height out of range.";
 		mb.show();
 	}
-	else if (res.resultType == FractalCanvas::ResizeResultType::MemoryError) {
+	else if (res.resultType == ResizeResultType::MemoryError) {
 		if (res.changed)
 		{
 			msgbox mb(wd, "Error", msgbox::ok);
@@ -1526,6 +1546,9 @@ public:
 	, tabs(*this, number_of_threads_)
 	, number_of_threads(number_of_threads_)
 	{
+		tabpanel_pl.bind(tabpanel);
+		tabpanel_pl.div("<x>");
+
 		bgcolor(colors::black);
 		statusbar.bgcolor(colors::black); //this effectively colors only the spacings between the labels because the labels on the statusbar have a color
 
@@ -1538,13 +1561,13 @@ public:
 			{
 				loadParameters();
 			});
-			menu_.at(i).append("Save parameters (CTRL + S)", [this](menu::item_proxy& ip)
+			menu_.at(i).append("Save parameters and image as (CTRL + S)", [this](menu::item_proxy& ip)
+			{
+				saveBothAs();
+			});
+			menu_.at(i).append("Save current file (CTRL + SHIFT + S)", [this](menu::item_proxy& ip)
 			{
 				saveParameters();
-			});
-			menu_.at(i).append("Save as (CTRL + SHIFT + S)", [this](menu::item_proxy& ip)
-			{
-				saveParametersAs();
 			});
 			menu_.at(i).append("Save image", [this](menu::item_proxy& ip)
 			{
@@ -1556,16 +1579,9 @@ public:
 					}
 				}
 			});
-			menu_.at(i).append("Save both", [this](menu::item_proxy& ip)
+			menu_.at(i).append("Save parameters as", [this](menu::item_proxy& ip)
 			{
-				FractalCanvas* canvas = activeCanvas();
-				if (canvas != nullptr) {
-					string path = getDate() + " " + canvas->P().get_procedure().name();
-					if (BrowseFile(getHwnd(), FALSE, "Save parameters and image", "Parameters\0*.efp\0\0", path)) {
-						saveParameters(canvas, path);
-						saveImage(canvas, path + ".png");
-					}
-				}
+				saveParametersAs();
 			});
 		}
 		menu_.push_back("&View");
@@ -1640,7 +1656,7 @@ This program is made to test the effect of Julia morphings / inflections. A clic
 
 Set inflection zoom
 
-Sets the base zoom level to which the program resets after applying an inflection. This zoom level is automatically corrected for the number of inflections, because an inflection halves the distance (the exponent in the magnification factor) to deeper shapes.
+Sets the base zoom level to which the program resets after applying an inflection. Without using this setting, the zoomlevel goes back to 0 after creating an inflection. The zoom level is automatically corrected for the number of inflections, because an inflection halves the distance (the exponent in the magnification factor) to deeper shapes.
 
 
 Coarse and fine
@@ -1715,6 +1731,21 @@ ExploreFractals.exe --help)"
 						helpwindow = nullptr;
 					}
 				}).detach();
+			});
+			menu_.at(i).append("About", [this](menu::item_proxy& ip)
+			{
+				msgbox mb(*this, "Information", msgbox::ok);
+				mb.icon(mb.icon_information);
+				mb << (R"(
+Program version: )" + to_string(PROGRAM_VERSION) + R"(
+
+Licence: GNU General Public License, version 3, see: https://www.gnu.org/licenses/gpl-3.0.html
+
+Web resources for this program:
+Source code and information: https://github.com/DinkydauSet/ExploreFractals
+Fractalforums thread: https://fractalforums.org/other/55/explore-fractals-inflection-tool/777
+)"				);
+				mb.show();
 			});
 		}
 		
@@ -1815,20 +1846,17 @@ ExploreFractals.exe --help)"
 		settingsTriangle.text_align(align::center, align_v::center);
 		settingsFiller.bgcolor(EFcolors::darkblue);
 
-		tabpanel_pl.bind(tabpanel);
-		tabpanel_pl.div("<x>");
-		//tabpanel_pl.collocate();
 
 		//This graphics object is used to measure text width in pixels. It's not a nice solution but it works. What it returns is the size of the text if it were rendered on this graphic, which means that graphic already has to be big enough for the text to fit, otherwise the returned size is too low. I set the width to 1000 pixels because that ought to be enough for every button caption. (I tried a height of 0 but that doesn't work.)
-		paint::graphics test(nana::size(1000,1));
-		uint newTabButtonWidth = test.text_extent_size(newTabButton.caption()).width;
-		uint fitToWindowButtonWidth = test.text_extent_size(fitToWindowButton.caption()).width;
-		uint fitToFractalButtonWidth = test.text_extent_size(fitToFractalButton.caption()).width;
-		uint resetButtonWidth = test.text_extent_size(resetButton.caption()).width;
-		uint toggleJuliaWidth = test.text_extent_size(toggleJulia.caption()).width;
-		uint leftButtonWidth = test.text_extent_size(leftButton.caption()).width;
-		uint rightButtonWidth = test.text_extent_size(rightButton.caption()).width;
-		uint setInflectionZoomButtonWidth = test.text_extent_size(setInflectionZoomButton.caption()).width;
+		paint::graphics measure(nana::size(1000,1));
+		uint newTabButtonWidth = measure.text_extent_size(newTabButton.caption()).width;
+		uint fitToWindowButtonWidth = measure.text_extent_size(fitToWindowButton.caption()).width;
+		uint fitToFractalButtonWidth = measure.text_extent_size(fitToFractalButton.caption()).width;
+		uint resetButtonWidth = measure.text_extent_size(resetButton.caption()).width;
+		uint toggleJuliaWidth = measure.text_extent_size(toggleJulia.caption()).width;
+		uint leftButtonWidth = measure.text_extent_size(leftButton.caption()).width;
+		uint rightButtonWidth = measure.text_extent_size(rightButton.caption()).width;
+		uint setInflectionZoomButtonWidth = measure.text_extent_size(setInflectionZoomButton.caption()).width;
 
 		constexpr uint extra = 6;
 		string main_form_layout = R"(
@@ -1946,7 +1974,7 @@ ExploreFractals.exe --help)"
 			return "ExploreFractals";
 	}
 
-	shared_ptr<FractalPanel> create_fractal_tab(FractalParameters& parameters, string title)
+	shared_ptr<FractalPanel> create_fractal_tab(const FractalParameters& parameters, string title)
 	{
 		shared_ptr<FractalPanel> fractalpanel = make_shared<FractalPanel>(tabpanel, number_of_threads, true);
 
@@ -1954,7 +1982,7 @@ ExploreFractals.exe --help)"
 		tabpanel_pl.collocate();
 
 		//I want to change the parameters here, so that recalculateScrollbars calculates the scrollbars properly, but I don't want the parametersChanged event here yet because the fractalpanel has not yet been added to the tabbar.
-		FractalCanvas::ResizeResult res = fractalpanel->changeParameters(parameters, EventSource::noEvents);
+		ResizeResult res = fractalpanel->changeParameters(parameters, EventSource::noEvents);
 		handleResizeResult(*this, res);
 
 		fractalpanel->recalculateScrollbars();
@@ -2097,7 +2125,7 @@ ExploreFractals.exe --help)"
 		shared_ptr<EFPanelBase> pane = tabs.canvas_panel_map[canvas];
 		auto fractalpanel = static_pointer_cast<FractalPanel>(pane);
 
-		bool modified = P.modifiedCalculations || P.modifiedColors || P.modifiedMemory;
+		bool modified = P.modified();
 
 		// if the tab is associated with an opened file, mark as modified (shows a * in the main window title bar)
 		if(
@@ -2105,14 +2133,19 @@ ExploreFractals.exe --help)"
 			&& fractalpanel->fileModified == false
 			&& modified
 		) {
-			if ( ! fractalpanel->fileModified) {
-				fractalpanel->fileModified = true;
-				
-				tabs.bar.text(index, string("*") + fractalpanel->filename);
-			}
+			fractalpanel->fileModified = true;	
+			tabs.bar.text(index, string("*") + fractalpanel->filename);
+			
 			if (tab_active) {
 				caption(fractalPanelTitle(fractalpanel.get()));
 			}
+		}
+
+		if (
+			P.modifiedProcedure
+			&& fractalpanel->fileAssociation == false
+		) {
+			tabs.bar.text(index, P.get_procedure().name());
 		}
 
 
@@ -2189,6 +2222,10 @@ ExploreFractals.exe --help)"
 
 	void canvasSizeChanged(void* canvas) {
 		SendMessage(getHwnd(), Message::CANVAS_SIZE_CHANGED, reinterpret_cast<WPARAM>(canvas), 0);
+	}
+
+	void canvasResizeFailed(void* canvas, ResizeResult result) {
+		handleResizeResult((window)this, result);
 	}
 
 	/*
@@ -2342,6 +2379,17 @@ ExploreFractals.exe --help)"
 		FractalCanvas* canvas = activeCanvas();
 		if (canvas != nullptr) {
 			saveParameters(canvas);
+		}
+	}
+
+	void saveBothAs() {
+		FractalCanvas* canvas = activeCanvas();
+		if (canvas != nullptr) {
+			string path = getDate() + " " + canvas->P().get_procedure().name();
+			if (BrowseFile(getHwnd(), FALSE, "Save parameters and image", "Parameters\0*.efp\0\0", path)) {
+				saveParameters(canvas, path);
+				saveImage(canvas, path + ".png");
+			}
 		}
 	}
 
@@ -2508,7 +2556,7 @@ private:
 
 		LRESULT res = 0;
 		bool continue_ = self->_m_call_before(i->second, msg, wp, lp, &res);
-		if(continue_)
+		if (continue_)
 		{
 			res = ::CallWindowProc(self->old_proc_, wd, msg, wp, lp);
 			self->_m_call_after(i->second, msg, wp, lp, &res);
@@ -2542,7 +2590,7 @@ private:
 std::recursive_mutex subclass::mutex_;
 std::map<HWND, subclass*> subclass::table_;
 
-#include <windows.h>
+
 
 int GUI_main(FractalParameters& defaultParameters, uint number_of_threads, FractalParameters& firstTabParameters)
 {
@@ -2633,7 +2681,7 @@ int GUI_main(FractalParameters& defaultParameters, uint number_of_threads, Fract
 						shared_ptr<FractalPanel> panel_ = static_pointer_cast<FractalPanel>(panel);
 						{
 							detail::bedrock::root_guard rg{brock, fm};
-							fm.create_fractal_tab(panel_->canvas.Pmutable(), fm.defaultParameters.get_procedure().name());
+							fm.create_fractal_tab(panel_->canvas.P(), panel_->canvas.P().get_procedure().name());
 						}
 						API::refresh_window(fm);
 					}
@@ -2650,10 +2698,10 @@ int GUI_main(FractalParameters& defaultParameters, uint number_of_threads, Fract
 						return true;
 					}
 					if (shift) {
-						fm.saveParametersAs();
+						fm.saveParameters();
 					}
 					else {
-						fm.saveParameters();
+						fm.saveBothAs();
 					}
 					return false;
 				}

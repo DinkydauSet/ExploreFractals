@@ -1,3 +1,21 @@
+/*
+    ExploreFractals, a tool for testing the effect of Mandelbrot set Julia morphings
+    Copyright (C) 2021  DinkydauSet
+
+    This program is free software: you can redistribute it and/or modify
+    it under the terms of the GNU General Public License as published by
+    the Free Software Foundation, either version 3 of the License, or
+    (at your option) any later version.
+
+    This program is distributed in the hope that it will be useful,
+    but WITHOUT ANY WARRANTY; without even the implied warranty of
+    MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+    GNU General Public License for more details.
+
+    You should have received a copy of the GNU General Public License
+    along with this program.  If not, see <https://www.gnu.org/licenses/>.
+*/
+
 #ifndef COMMON_H
 #define COMMON_H
 
@@ -44,7 +62,7 @@ string to_string(double_c c, std::streamsize precision = 5, bool fixed_ = true) 
 }
 
 //Constants
-constexpr double PROGRAM_VERSION = 9.0;
+constexpr double PROGRAM_VERSION = 9.1;
 constexpr uint NUMBER_OF_TRANSFORMATIONS = 7 + 1;
 constexpr uint MAXIMUM_TILE_SIZE = 50; //tiles in renderSilverRect smaller than this do not get subdivided.
 constexpr uint NEW_TILE_THREAD_MIN_PIXELS = 8; //For tiles with a width or height in PIXELS smaller than this no new threads are created, which has two reasons: 1. thread overhead; 2. See the explanation of stop_creating_threads in the function Render::renderSilverRect.
@@ -208,6 +226,18 @@ public:
 	virtual uint getId() = 0;
 };
 
+enum class ResizeResultType {
+	Success,
+	OutOfRangeError,
+	MemoryError
+};
+
+struct ResizeResult {
+	bool success;
+	bool changed;
+	ResizeResultType resultType;
+};
+
 /*
 	a (programming) interface for the graphical interface
 	Non-GUI classes can request action by the GUI through this interface.
@@ -226,13 +256,7 @@ public:
 	virtual void bitmapRenderFinished(void* canvas, uint bitmapRenderID) = 0;
 	virtual void parametersChanged(void* canvas, int source_id) = 0;
 	virtual void canvasSizeChanged(void* canvas) = 0;
-};
-
-struct box {
-	double xfrom;
-	double xto;
-	double yfrom;
-	double yto;
+	virtual void canvasResizeFailed(void* canvas, ResizeResult result) = 0;
 };
 
 #endif

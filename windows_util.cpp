@@ -5,10 +5,6 @@
 #include <windows.h>
 #include <commdlg.h>
 
-//this program
-#include "common.cpp"
-
-
 /*
 	Copied from FolderBrowser.cpp from Kalles Fraktaler: https://code.mathr.co.uk/kalles-fraktaler-2/blob/b8234f690ff44cd3f6af7d90d2c6c44695ccb4f0:/common/FolderBrowser.cpp
 	Function to open a file browser to select a filename or destination for a file to be read of written

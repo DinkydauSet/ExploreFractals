@@ -1,3 +1,21 @@
+/*
+    ExploreFractals, a tool for testing the effect of Mandelbrot set Julia morphings
+    Copyright (C) 2021  DinkydauSet
+
+    This program is free software: you can redistribute it and/or modify
+    it under the terms of the GNU General Public License as published by
+    the Free Software Foundation, either version 3 of the License, or
+    (at your option) any later version.
+
+    This program is distributed in the hope that it will be useful,
+    but WITHOUT ANY WARRANTY; without even the implied warranty of
+    MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+    GNU General Public License for more details.
+
+    You should have received a copy of the GNU General Public License
+    along with this program.  If not, see <https://www.gnu.org/licenses/>.
+*/
+
 #ifndef RENDER_H
 #define RENDER_H
 
@@ -61,11 +79,11 @@ struct EscapeTimeFormula
 	{
 		constexpr Procedure procedure = getProcedureObject(procedure_identifier);
 
-		if (procedure.kind == ProcedureKind::Mandelbrot)
+		if constexpr(procedure.kind == ProcedureKind::Mandelbrot)
 		{
 			return MandelbrotFormula<procedure.inflectionPower>::escapeRadiusSq;
 		}
-		else if (procedure.id == BURNING_SHIP.id)
+		else if constexpr(procedure.id == BURNING_SHIP.id)
 		{
 			return 4.0;
 		}
@@ -78,11 +96,11 @@ struct EscapeTimeFormula
 	{
 		constexpr Procedure procedure = getProcedureObject(procedure_identifier);
 
-		if (procedure.kind == ProcedureKind::Mandelbrot)
+		if constexpr(procedure.kind == ProcedureKind::Mandelbrot)
 		{
 			return MandelbrotFormula<procedure.inflectionPower>::apply(z,c);
 		}
-		else if (procedure.id == BURNING_SHIP.id)
+		else if constexpr(procedure.id == BURNING_SHIP.id)
 		{
 			return pow((abs(real(z)) + abs(imag(z))*I), 2) + c;
 		}
@@ -217,7 +235,7 @@ public:
 
 		uint iterationCount = 0;
 
-		if (procedure_identifier == M2.id) {
+		if constexpr(procedure_identifier == M2.id) {
 			double_c c = map_with_transformations_m2(x, y);
 
 			double cr;
@@ -226,7 +244,7 @@ public:
 			double zi;
 			double zrsqr;
 			double zisqr;
-			if (julia) {
+			if constexpr(julia) {
 				cr = real(juliaSeed);
 				ci = imag(juliaSeed);
 				zr = real(c);
@@ -271,7 +289,7 @@ public:
 				iterationCount++;
 			}
 		}
-		if (
+		if constexpr(
 			procedure_identifier == M3.id
 			|| procedure_identifier == M4.id
 			|| procedure_identifier == M5.id
@@ -283,14 +301,14 @@ public:
 			constexpr double escapeRadiusSq = EscapeTimeFormula<procedure_identifier>::escapeRadiusSq;
 			double_c c;
 			double_c z;
-			if (julia) {
+			if constexpr(julia) {
 				c = juliaSeed;
 				z = map_with_transformations(x, y);
 			}
 			else {
 				c = map_with_transformations(x, y);
 				z = 0;
-				if (	procedure.kind == ProcedureKind::Mandelbrot) {
+				if constexpr(procedure.kind == ProcedureKind::Mandelbrot) {
 					//This is a Mandelbrot formula. It can be checked whether c is within the largest circle within the cardioid:
 					constexpr int power = procedure.inflectionPower;
 
@@ -306,7 +324,7 @@ public:
 				iterationCount++;
 			}
 		}
-		if (procedure_identifier == CHECKERS.id) {
+		if constexpr(procedure_identifier == CHECKERS.id) {
 			double_c c = map_with_transformations_m2(x, y);
 			//create checkerboard tiles
 			double resolution = pi; //tile size, pi goes well with the natural log transformation
@@ -343,7 +361,7 @@ public:
 			if (result) iterationCount = 503; //these choices are arbitrary and just to distinguish tiles. I chose primes because I hope that it makes periodic problems less likely when the number of gradient colors divides one of these values, but I'm not sure if it really helps.
 			else iterationCount = 53;
 		}
-		if (procedure_identifier == TRIPLE_MATCHMAKER.id) {
+		if constexpr(procedure_identifier == TRIPLE_MATCHMAKER.id) {
 			//constants for Triple Matchmaker:
 			constexpr double sqrt3 = gcem::sqrt(3);
 			constexpr double a = 2.2;
@@ -353,7 +371,7 @@ public:
 			double_c c;
 			double_c z;
 			double summ = 0;
-			if (julia) {
+			if constexpr(julia) {
 				c = juliaSeed;
 				z = map_with_transformations(x, y);
 			}
@@ -369,7 +387,7 @@ public:
 			canvas.setPixel(x, y, iterationCount, CALCULATED, false);
 			return iterationCount;
 		}
-		if (procedure_identifier == RECURSIVE_FRACTAL.id) {
+		if constexpr(procedure_identifier == RECURSIVE_FRACTAL.id) {
 			//normal Mandelbrot power 2 iteration, after which a measure of how hard the pixel escaped and the angle of c are used as coordinate in a julia set. This is a fractal of fractals. The output of one fractal procecure is used as the input for the second.
 			double_c c = map_with_transformations_m2(x, y);
 
@@ -456,7 +474,7 @@ public:
 				iterationCount += iterationCountOld;
 			}
 		}
-		if (procedure_identifier == PURE_MORPHINGS.id) {
+		if constexpr(procedure_identifier == PURE_MORPHINGS.id) {
 			double_c c = 
 				canvas.P().pre_transformation(
 				canvas.P().rotation(
@@ -569,7 +587,7 @@ public:
 		double julia_i;
 
 		//note that the order here is different from the arrays x, y and c. Apparently _mm256_set_pd fills the vector in opposite order.
-		if (julia) {
+		if constexpr(julia) {
 			julia_r = real(juliaSeed);
 			julia_i = imag(juliaSeed);
 
@@ -630,7 +648,7 @@ public:
 								nextPixel++;
 
 								//verify that this pixel is valid:
-								if (julia) {
+								if constexpr(julia) {
 									iterationCounts[k] = 0;
 									crp[k] = julia_r;
 									cip[k] = julia_i;
@@ -641,7 +659,13 @@ public:
 
 									zisqr_plus_zrsqr_p[k] = zrsqrp[k] + zisqrp[k];
 
-									if (zisqr_plus_zrsqr_p[k] > bailout_p[0]) {
+									//todo: room for improvement; this compares all 4 pixels, which is unnecessary work, but I don't know how to make a normal double comparison with NaN result in true. This way with AVX does what is needed.
+									pixel_has_escaped_v = _mm256_xor_pd(
+										_mm256_cmp_pd(zisqr_plus_zrsqr_v, bailout_v, _CMP_LE_OQ)
+										,all_true
+									);
+
+									if (pixel_has_escaped_p[8*k]) {										
 										//julia escaped at 0 iterations
 										setPixelAndThisIter(x[k], y[k], 0, CALCULATED, false);
 										pixelIsValid = false;
@@ -786,7 +810,7 @@ public:
 	*/
 	bool isSameHorizontalLine(uint xFrom, uint xTo, uint height) {
 		assert(xTo >= xFrom);
-		if (procedure.guessable) {
+		if constexpr(procedure.guessable) {
 			bool same = true;
 			uint thisIter = canvas.getIterationcount(xFrom, height);
 			for (uint x = xFrom + 1; x < xTo; x++) {
@@ -807,7 +831,7 @@ public:
 	*/
 	bool isSameVerticalLine(uint yFrom, uint yTo, uint width) {
 		assert(yTo >= yFrom);
-		if (procedure.guessable) {
+		if constexpr(procedure.guessable) {
 			bool same = true;
 			uint thisIter = canvas.getIterationcount(width, yFrom);
 			for (uint y = yFrom + 1; y < yTo; y++) {
@@ -885,7 +909,7 @@ public:
 
 		bool pass_on_bitmap_render_responsibility = bitmap_render_responsibility && !stop_creating_threads;
 
-		if (procedure.guessable) {
+		if constexpr(procedure.guessable) {
 			if (sameRight && sameLeft && sameTop && sameBottom && iterRight == iterTop && iterTop == iterLeft && iterLeft == iterBottom && iterRight != 1 && iterRight != 0) {
 				//The complete boundary of the tile has the same iterationCount. Fill with that same value:
 				bool isInMinibrot = canvas.getIterData(xmin, ymin).inMinibrot();

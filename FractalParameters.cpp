@@ -1,3 +1,21 @@
+/*
+    ExploreFractals, a tool for testing the effect of Mandelbrot set Julia morphings
+    Copyright (C) 2021  DinkydauSet
+
+    This program is free software: you can redistribute it and/or modify
+    it under the terms of the GNU General Public License as published by
+    the Free Software Foundation, either version 3 of the License, or
+    (at your option) any later version.
+
+    This program is distributed in the hope that it will be useful,
+    but WITHOUT ANY WARRANTY; without even the implied warranty of
+    MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+    GNU General Public License for more details.
+
+    You should have received a copy of the GNU General Public License
+    along with this program.  If not, see <https://www.gnu.org/licenses/>.
+*/
+
 #ifndef FRACTALPARAMETERS_H
 #define FRACTALPARAMETERS_H
 
@@ -29,16 +47,24 @@ class FractalParameters {
 		initialize();
 	}
 
+	// These are bools to keep track of changes since the last time clearModified was used.
+	// If a change is made and then reverted, the bools remain the same. They don't track net changes.
 	bool modifiedMemory;
 	bool modifiedSize;
 	bool modifiedCalculations;
 	bool modifiedColors;
+	bool modifiedProcedure;
+	bool modifiedInflectionZoom;
+	bool modifiedJuliaSeed;
 
 	void clearModified() {
 		modifiedMemory = false;
 		modifiedSize = false;
 		modifiedCalculations = false;
 		modifiedColors = false;
+		modifiedProcedure = false;
+		modifiedInflectionZoom = false;
+		modifiedJuliaSeed = false;
 	}
 
 	bool modified() const { return (
@@ -46,6 +72,9 @@ class FractalParameters {
 		|| modifiedSize
 		|| modifiedCalculations
 		|| modifiedColors
+		|| modifiedProcedure
+		|| modifiedInflectionZoom
+		|| modifiedJuliaSeed
 	);}
 
 	readonly(uint, screenWidth)
@@ -408,7 +437,19 @@ public:
 		this->julia = julia;
 	}
 
-	void setJuliaSeed(double_c seed) {
+	void setJuliaSeed(double_c seed)
+	{
+		if (real(seed) != real(seed) || imag(seed) != imag(seed)) { //seed is NaN
+			cout << "Attempt to set a NaN julia seed" << endl;
+			return; //todo: maybe show an error message when this happens
+		}
+
+		if (juliaSeed != seed) {
+			modifiedJuliaSeed = true;
+
+			//This always works well. If this is skipped because julia is false, and julia is later changed, that also sets modifiedCalculations to true.
+			if(julia) modifiedCalculations = true;
+		}
 		juliaSeed = seed;
 	}
 	
@@ -425,6 +466,7 @@ public:
 			changed = true;
 		}
 		modifiedCalculations |= changed;
+		modifiedProcedure |= changed;
 		return changed;
 	}
 	
@@ -453,7 +495,9 @@ public:
 		Therefore to derive it from the current zoom level, the correction needs to be undone (by multiplying by power).
 	*/
 	void setInflectionZoomLevel(double zoomLevel) {
+		bool changed = inflectionZoomLevel != zoomLevel;
 		inflectionZoomLevel = zoomLevel;
+		modifiedInflectionZoom |= changed;
 	}
 
 	void setInflectionZoomLevel() {
@@ -507,7 +551,7 @@ public:
 
 	bool removeInflection() {
 		bool changed = false;
-		bool modifiedCalculations_copy = modifiedCalculations;
+		bool modifiedCalculations_copy = modifiedCalculations; //use a copy because setRotation changes modifiedCalculations too
 		if (inflectionCount > 0) {
 			inflectionCount--;
 			double_c newCenter = 0;

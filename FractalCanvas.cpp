@@ -1,3 +1,21 @@
+/*
+    ExploreFractals, a tool for testing the effect of Mandelbrot set Julia morphings
+    Copyright (C) 2021  DinkydauSet
+
+    This program is free software: you can redistribute it and/or modify
+    it under the terms of the GNU General Public License as published by
+    the Free Software Foundation, either version 3 of the License, or
+    (at your option) any later version.
+
+    This program is distributed in the hope that it will be useful,
+    but WITHOUT ANY WARRANTY; without even the implied warranty of
+    MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+    GNU General Public License for more details.
+
+    You should have received a copy of the GNU General Public License
+    along with this program.  If not, see <https://www.gnu.org/licenses/>.
+*/
+
 #ifndef FRACTALCANVAS_H
 #define FRACTALCANVAS_H
 
@@ -157,6 +175,12 @@ public:
 		}
 	}
 
+	void canvasResizeFailedEvent(ResizeResult result) {
+		for (GUIInterface* gui : GUIs) {
+			gui->canvasResizeFailed(voidPtr(), result);
+		}
+	}
+
 	void renderStartedEvent(shared_ptr<RenderInterface> render, int renderID) {
 		for (GUIInterface* gui : GUIs) {
 			gui->renderStarted(move(render));
@@ -207,18 +231,6 @@ public:
 		return rgbColorAverage(previousColor, nextColor, ratio);
 	}
 
-	enum class ResizeResultType {
-		Success,
-		OutOfRangeError,
-		MemoryError
-	};
-
-	struct ResizeResult {
-		bool success;
-		bool changed;
-		ResizeResultType resultType;
-	};
-
 	ResizeResult resize(uint newOversampling, uint newScreenWidth, uint newScreenHeight) {
 		uint oldScreenWidth = mP.get_screenWidth();
 		uint oldScreenHeight = mP.get_screenHeight();
@@ -232,6 +244,8 @@ public:
 		assert(newOversampling > 0);
 		assert(newScreenWidth > 0);
 		assert(newScreenHeight > 0);
+
+		sizeof(ResizeResult);
 
 		auto fractalcanvas_realloc = [&](uint64 size) {
 			cout << "reallocating fractalcanvas to size: " << size << endl;
@@ -350,10 +364,22 @@ public:
 
 		auto postActions = [this, source_id](ResizeResult res)
 		{	
-			assert( mP.modifiedSize == res.changed ); //The modification in size has resulted in a changed size of the FractalCanvas
-			assert( ! (mP.modifiedMemory && ! mP.modifiedCalculations) ); //If memory is changed, that also changes the calculations.
-			assert( ! (mP.modifiedSize && ! mP.modifiedMemory) ); //If the size is changed, that also changes the memory.
+			//If there is a modification in size, that has resulted in a changed size of the FractalCanvas, unless the resize failed because of not enough memory for example.
+			assert(
+				mP.modifiedSize == false
+				|| (
+					res.changed || res.success == false
+				)
+			);
 
+			//If memory is changed, that also changes the calculations.
+			assert( ! (mP.modifiedMemory && ! mP.modifiedCalculations) );
+
+			//If the size is changed, that also changes the memory.
+			assert( ! (mP.modifiedSize && ! mP.modifiedMemory) );
+
+			if (res.success == false)
+				canvasResizeFailedEvent(res);
 			if (res.changed)
 				sizeChangedEvent();
 			parametersChangedEvent(source_id);
