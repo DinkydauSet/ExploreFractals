@@ -73,10 +73,10 @@ Triple matchmaker - A formula by Pauldelbrot at fractalforums.org. This fractal 
 
 ##### Keyboard shortcuts
 
-CTRL + Z and CTRL + Y - move back and forward in the history
-CTRL + T - create a new tab
-CTRL + D - duplicate the current tab
-CTRL + W - close the current tab
+CTRL + Z and CTRL + Y - move back and forward in the history  
+CTRL + T - create a new tab  
+CTRL + D - duplicate the current tab  
+CTRL + W - close the current tab  
 CTRL + TAB and CTRL + SHIFT + TAB - go to the next or previous tab
 
 ##### Using a default parameter file
