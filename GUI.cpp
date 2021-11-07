@@ -56,10 +56,13 @@ using namespace nana;
 
 GUIInterface* theOnlyNanaGUI; //This will be a pointer to a main_form. FractalCanvas instances don't need to know that it's a main_form. It could be "any" GUIInterface.
 HWND main_form_hwnd;
+
 window helpwindow = nullptr;
+window jsonwindow = nullptr;
 
 mutex refreshThreads;
 mutex helpwindow_mutex;
+mutex jsonwindow_mutex;
 
 namespace EFcolors {
 	const color darkblue = color(10, 36, 106);
@@ -1530,7 +1533,12 @@ public:
 	button toggleJulia{ *this, "Toggle Julia" };
 	button leftButton{ *this, "Left"};
 	button rightButton{ *this, "Right" };
-	button setInflectionZoomButton {*this, "Set inflection zoom"};
+	button setInflectionZoomButton { *this, "Set inflection zoom" };
+
+	//todo: remove this if unnecessary. Disabling or enabling AVX can be a program setting
+	#ifndef NDEBUG
+	button avxtoggle { *this, "Toggle AVX" };
+	#endif
 
 	label settingsLabel{ *this, "Settings" };
 	label settingsTriangle{ *this, "▲" };
@@ -1732,6 +1740,61 @@ ExploreFractals.exe --help)"
 					}
 				}).detach();
 			});
+			//todo: finish JSON window
+			#ifndef NDEBUG
+			menu_.at(i).append("JSON", [this](menu::item_proxy& ip)
+			{
+				class jsonform : public form {
+				public:
+					place& pl;
+					textbox text;
+
+					jsonform(string text_) : form( API::make_center(400, 800) )
+					, pl(get_place())
+					, text(*this, text_)
+					{
+						text.line_wrapped(true);
+						text.enable_caret();
+						text.set_keywords("brackets", false, false, { "{", "}", ":", "[", "]" });
+						text.set_highlight("brackets", colors::blue, colors::white);
+						div("x");
+						pl["x"] << text;
+						pl.collocate();
+					}
+				};
+
+				static bool exists = false;
+
+				FractalCanvas* canvas = activeCanvas();
+				if (canvas != nullptr)
+				{
+					if (exists) {
+						API::close_window(jsonwindow);
+					}
+
+					string text = canvas->P().toJson();
+
+					thread([&, text, this]()
+					{
+						lock_guard<mutex> guard(jsonwindow_mutex);
+						{
+							assert(exists == false);
+							exists = true;
+
+							jsonform fm{ text };
+							fm.caption("JSON");
+							jsonwindow = (window)fm; //window is a pointer type
+
+							fm.show();
+							exec();
+
+							exists = false;
+							helpwindow = nullptr;
+						}
+					}).detach();
+				}
+			});
+			#endif
 			menu_.at(i).append("About", [this](menu::item_proxy& ip)
 			{
 				msgbox mb(*this, "Information", msgbox::ok);
@@ -1838,6 +1901,13 @@ Fractalforums thread: https://fractalforums.org/other/55/explore-fractals-inflec
 			}
 		});
 
+		#ifndef NDEBUG
+		avxtoggle.events().click([this]
+		{
+			using_avx = ! using_avx;
+		});
+		#endif
+
 		settingsLabel.bgcolor(EFcolors::darkblue);
 		settingsLabel.fgcolor(EFcolors::nearwhite);
 		settingsLabel.text_align(align::center, align_v::center);
@@ -1872,7 +1942,13 @@ Fractalforums thread: https://fractalforums.org/other/55/explore-fractals-inflec
 					<toggleJulia min=)"+to_string(toggleJuliaWidth + extra)+R"(px>
 					<leftButton min=)"+to_string(leftButtonWidth + extra)+R"(px>
 					<rightButton min=)"+to_string(rightButtonWidth + extra)+R"(px>
-					<setInflectionZoomButton min=)"+to_string(setInflectionZoomButtonWidth + extra)+R"(px>
+					<setInflectionZoomButton min=)"+to_string(setInflectionZoomButtonWidth + extra)+R"(px>)" +
+					#ifndef NDEBUG
+						"<avxtoggle>"
+					#else
+						""
+					#endif
+					+ R"(
 				>
 			>
 			<
@@ -1897,6 +1973,10 @@ Fractalforums thread: https://fractalforums.org/other/55/explore-fractals-inflec
 		pl["leftButton"] << leftButton;
 		pl["rightButton"] << rightButton;
 		pl["setInflectionZoomButton"] << setInflectionZoomButton;
+		
+		#ifndef NDEBUG
+		pl["avxtoggle"] << avxtoggle;
+		#endif
 
 		pl["settingslabel"] << settingsTriangle << settingsLabel << settingsFiller;
 		pl["tabs"] << tabs.bar;

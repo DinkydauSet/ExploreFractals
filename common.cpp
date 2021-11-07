@@ -30,6 +30,7 @@
 #include <cstdint>
 #include <chrono>
 #include <thread>
+#include <cmath>
 
 #ifndef NDEBUG
 constexpr bool debug = true;
@@ -49,11 +50,12 @@ typedef int32_t int32;
 typedef int64_t int64;
 typedef unsigned int uint;
 
-typedef uint32_t ARGB;
+
+// double_c type definition
 
 typedef std::complex<double> double_c;
 constexpr double_c I(0, 1);
-constexpr double pi = 3.1415926535897932384626433832795;
+
 string to_string(double_c c, std::streamsize precision = 5, bool fixed_ = true) {
 	stringstream ss;
 	if (fixed_) ss << fixed;
@@ -61,18 +63,29 @@ string to_string(double_c c, std::streamsize precision = 5, bool fixed_ = true) 
 	return ss.str();
 }
 
+bool isfinite(double_c c) {
+	return isfinite(real(c)) && isfinite(imag(c));
+}
+
+
 //Constants
-constexpr double PROGRAM_VERSION = 9.1;
+
+constexpr double PROGRAM_VERSION = 9.2;
 constexpr uint NUMBER_OF_TRANSFORMATIONS = 7 + 1;
 constexpr uint MAXIMUM_TILE_SIZE = 50; //tiles in renderSilverRect smaller than this do not get subdivided.
 constexpr uint NEW_TILE_THREAD_MIN_PIXELS = 8; //For tiles with a width or height in PIXELS smaller than this no new threads are created, which has two reasons: 1. thread overhead; 2. See the explanation of stop_creating_threads in the function Render::renderSilverRect.
+constexpr double pi = 3.1415926535897932384626433832795;
+
 
 //Global variables
-unsigned int NUMBER_OF_THREADS;
+uint NUMBER_OF_THREADS;
 bool using_avx = false;
 
 mutex threadCountChange;
 mutex drawingBitmap;
+
+
+//Procedures definition
 
 namespace ProcedureKind {
 	enum {
@@ -175,6 +188,10 @@ string transformation_name(int transformation_id)
 };
 
 
+// ARGB color type definition
+
+typedef uint32_t ARGB;
+
 inline ARGB rgb(uint8 r, uint8 g, uint8 b) {
 	return ((uint)(((uint8)(b)|((uint16)((uint8)(g))<<8))|(((uint)(uint8)(r))<<16)));
 }
@@ -204,7 +221,7 @@ inline ARGB rgbColorAverage(ARGB c1, ARGB c2, double ratio) {
 
 
 /*
-This class is used in FractalCanvas to avoid depending on the windows api to resize the bitmap. Instead, it depends on BitmapManager. Because any derivation of BitmapManager can be used, that makes FractalCanvas compatible with any bitmap that has a pointer to 4-byte RGBA-values (represented by a uint here). This class intended only as an abstraction. No instance of BitmapManager should be used, only of its derivations.
+This class is used in FractalCanvas to avoid depending on the windows api to resize the bitmap. Instead, it depends on BitmapManager. Because any derivation of BitmapManager can be used, that makes FractalCanvas compatible with any bitmap that has a pointer to 4-byte RGBA-values (represented by a uint here).
 */
 class BitmapManager {
 public:

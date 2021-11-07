@@ -439,7 +439,7 @@ public:
 
 	void setJuliaSeed(double_c seed)
 	{
-		if (real(seed) != real(seed) || imag(seed) != imag(seed)) { //seed is NaN
+		if (isfinite(seed) == false) { //seed is NaN
 			cout << "Attempt to set a NaN julia seed" << endl;
 			return; //todo: maybe show an error message when this happens
 		}

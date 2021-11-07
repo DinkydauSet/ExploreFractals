@@ -461,7 +461,7 @@ examples:
 	}
 	else if (render_image || render_animation)
 	{
-		FractalCanvas canvas(defaultParameters, NUMBER_OF_THREADS, make_shared<SimpleBitmapManager>(), {});
+		FractalCanvas canvas{ defaultParameters, NUMBER_OF_THREADS, make_shared<SimpleBitmapManager>(), {} };
 
 		if (render_image)
 		{		
@@ -482,7 +482,6 @@ examples:
 			//this causes the parameters of the final frame of the animation to be used in the first tab if interactive is true
 			initialParameters.fromParameters(canvas.P());
 		}
-		
 	}
 
 	if (!interactive) {

@@ -92,6 +92,7 @@ struct EscapeTimeFormula
 		}
 	})();
 
+	
 	static inline double_c apply(double_c z, double_c c)
 	{
 		constexpr Procedure procedure = getProcedureObject(procedure_identifier);
@@ -109,6 +110,7 @@ struct EscapeTimeFormula
 			return 0;
 		}
 	};
+	
 };
 
 
@@ -256,7 +258,8 @@ public:
 				double zx = real(c);
 				double zy = imag(c);
 
-				zx -= 0.25; zy *= zy;
+				zx -= 0.25;
+				zy *= zy;
 				double q = zx * zx + zy;
 				if (4 * q*(q + zx) < zy) {
 					//point is inside the cardioid
@@ -280,6 +283,18 @@ public:
 				zisqr = 0;
 			}
 			while (zrsqr + zisqr <= 4.0 && iterationCount < maxIters) {
+				if( x == 0 && y == 0) {
+					cout << "dinges" << endl;
+					cout << zrsqr << " " << zisqr << " " << (zrsqr + zisqr <= 4.0) << endl;
+					cout << isfinite(zrsqr) << isfinite(zisqr) << endl;
+
+					cout << "rare test "<< endl;
+					double zrsqr = nan("");
+					double zisqr = nan("");
+
+					cout << zrsqr << " " << zisqr << " " << (zrsqr + zisqr <= 4.0) << endl;
+					cout << isfinite(zrsqr) << isfinite(zisqr) << endl;
+				}
 				zi = zr * zi;
 				zi += zi;
 				zi += ci;
@@ -289,6 +304,7 @@ public:
 				iterationCount++;
 			}
 		}
+	continue_nan:
 		if constexpr(
 			procedure_identifier == M3.id
 			|| procedure_identifier == M4.id
@@ -539,7 +555,7 @@ public:
 	inline bool calcPointVectorAVX_M2(vector<point>& points, uint fromPoint, uint toPoint) {
 		//AVX for Mandelbrot power 2
 		//AVX is used. Length 4 arrays and vectors are constructed to iterate 4 pixels at once. That means 4 x-values, 4 y-values, 4 c-values etc.
-		__m256d all_true = _mm256_cmp_pd(_mm256_setzero_pd(), _mm256_setzero_pd(), _CMP_EQ_OS);
+		__m256d all_true = _mm256_cmp_pd(_mm256_set1_pd(1), _mm256_setzero_pd(), _CMP_NLE_UQ);
 
 		uint thisIter = -1;
 		bool isSame = true; //whether all iteration counts of the pixels in this vector are the same
@@ -581,10 +597,10 @@ public:
 		__m256d pixel_has_escaped_v = _mm256_setzero_pd();
 		double* bailout_p = (double*)&bailout_v;
 		double* zisqr_plus_zrsqr_p = (double*)&zisqr_plus_zrsqr_v;
-		bool* pixel_has_escaped_p = (bool*)&pixel_has_escaped_v;
+		uint64* pixel_has_escaped_p = (uint64*)&pixel_has_escaped_v;
 
-		double julia_r;
-		double julia_i;
+		[[maybe_unused]] double julia_r;
+		[[maybe_unused]] double julia_i;
 
 		//note that the order here is different from the arrays x, y and c. Apparently _mm256_set_pd fills the vector in opposite order.
 		if constexpr(julia) {
@@ -619,10 +635,10 @@ public:
 
 		while (true) {
 			if (
-				pixel_has_escaped_p[0]
-				|| pixel_has_escaped_p[8] //Indices are multiplied by 8 because the bool values in pixel_has_escaped_p are stored as doubles which are 8 bytes long:
-				|| pixel_has_escaped_p[16]
-				|| pixel_has_escaped_p[24]
+				pixel_has_escaped_p[0] > 0
+				|| pixel_has_escaped_p[1] > 0
+				|| pixel_has_escaped_p[2] > 0
+				|| pixel_has_escaped_p[3] > 0
 				|| iterationCounts[0] >= maxIters
 				|| iterationCounts[1] >= maxIters
 				|| iterationCounts[2] >= maxIters
@@ -631,11 +647,11 @@ public:
 				//when here, one of the pixels has escaped or exceeded the max number of iterations
 
 				for (int k = 0; k < 4; k++) { //for each pixel in the AVX vector
-					if (pixel_has_escaped_p[8 * k] || iterationCounts[k] >= maxIters) { //this pixel is done
+					if (pixel_has_escaped_p[k] || iterationCounts[k] >= maxIters) { //this pixel is done
 						if (nextPixel < toPoint) {
 							//There is work left to do. The finished pixel needs to be replaced by a new one.
 
-							setPixelAndThisIter(x[k], y[k], iterationCounts[k], CALCULATED, iterationCounts[k] == maxIters); //it is done so we set it
+							setPixelAndThisIter(x[k], y[k], iterationCounts[k], CALCULATED, iterationCounts[k] == maxIters); //set because the pixel was done
 							iterationCounts[k] = -1; //to mark pixel k in the vectors as done/invalid
 
 							bool pixelIsValid = false;
@@ -659,13 +675,13 @@ public:
 
 									zisqr_plus_zrsqr_p[k] = zrsqrp[k] + zisqrp[k];
 
-									//todo: room for improvement; this compares all 4 pixels, which is unnecessary work, but I don't know how to make a normal double comparison with NaN result in true. This way with AVX does what is needed.
-									pixel_has_escaped_v = _mm256_xor_pd(
-										_mm256_cmp_pd(zisqr_plus_zrsqr_v, bailout_v, _CMP_LE_OQ)
-										,all_true
-									);
 
-									if (pixel_has_escaped_p[8*k]) {										
+									pixel_has_escaped_p[k] =
+										zisqr_plus_zrsqr_p[k] >= bailout_p[0]
+										|| isfinite(zisqr_plus_zrsqr_p[k]) == false;
+										//|| zisqr_plus_zrsqr_p[k] != zisqr_plus_zrsqr_p[k]; //nan
+
+									if (pixel_has_escaped_p[k] > 0) {
 										//julia escaped at 0 iterations
 										setPixelAndThisIter(x[k], y[k], 0, CALCULATED, false);
 										pixelIsValid = false;
@@ -742,7 +758,8 @@ public:
 		}
 
 		//Finish iterating the remaining 3 or fewer pixels without AVX:
-		for (int k = 0; k < 4; k++) {
+		for (int k = 0; k < 4; k++)
+		{
 			uint iterationCount = iterationCounts[k];
 			if (iterationCount != -1) {
 				crd = crp[k];
