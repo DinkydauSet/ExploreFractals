@@ -94,7 +94,7 @@ The only file that needs to be compiled is ExploreFractals.cpp. As of version 9,
 
 To compile with GCC:
 
-> g++ ExploreFractals.cpp -std=c++17 -s -static -m64 -O2 -ffast-math -I. -L. -lnana -lgdi32 -lcomdlg32 -D NDEBUG -o ExploreFractals.exe
+> g++ ExploreFractals.cpp -std=c++17 -s -static -m64 -O2 -ffast-math -fno-finite-math-only -I. -L. -lnana -lgdi32 -lcomdlg32 -D NDEBUG -o ExploreFractals.exe
 
 More information about compiling with GCC: https://github.com/DinkydauSet/ExploreFractals/wiki/Compiling-with-GCC
 
