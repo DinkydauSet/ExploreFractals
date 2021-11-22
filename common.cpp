@@ -134,10 +134,7 @@ struct Procedure {
 	 2. Add it to getProcedureObject.
 	 3. Add a case to the switch in FractalCanvas::createNewRender.
 	 4. Define the calculations that should be done when this procedure is used in Render::calcPoint. An AVX implementation should be placed in Render::calcPointVector. Note: hasJuliaVersion and hasAvxVersion should correspond with the real situation. An AVX implementation is not used if hasAvxVersion is false even if there is one. The same goes for julia versions.
-	 5. To make it available through menu options:
-	   5.1 Create a new value for it in the enum in the MenuOption namespace.
-	   5.2 Use the value in adding the menu in the AddMenus function.
-	   5.3 Handle usage of the menu option in the case WM_COMMAND in MainWndProc.
+	 5. To make it available through menu options: add the ID to the const vector<int> procedureIDs in GUI.cpp
 */
 //                                      id   guessable inflection-  name                    hasJulia-  hasAvx-    procedureClass
 //                                                      Power                                 Version    Version

@@ -166,7 +166,7 @@ public:
 		if(debug) cout << "creating render " << renderID << endl;
 	}
 
-	~Render(void) {
+	~Render() {
 		if(debug) cout << "deleting render " << renderID << endl;
 	}
 
@@ -283,18 +283,6 @@ public:
 				zisqr = 0;
 			}
 			while (zrsqr + zisqr <= 4.0 && iterationCount < maxIters) {
-				if( x == 0 && y == 0) {
-					cout << "dinges" << endl;
-					cout << zrsqr << " " << zisqr << " " << (zrsqr + zisqr <= 4.0) << endl;
-					cout << isfinite(zrsqr) << isfinite(zisqr) << endl;
-
-					cout << "rare test "<< endl;
-					double zrsqr = nan("");
-					double zisqr = nan("");
-
-					cout << zrsqr << " " << zisqr << " " << (zrsqr + zisqr <= 4.0) << endl;
-					cout << isfinite(zrsqr) << isfinite(zisqr) << endl;
-				}
 				zi = zr * zi;
 				zi += zi;
 				zi += ci;
@@ -304,7 +292,6 @@ public:
 				iterationCount++;
 			}
 		}
-	continue_nan:
 		if constexpr(
 			procedure_identifier == M3.id
 			|| procedure_identifier == M4.id
@@ -550,8 +537,7 @@ public:
 		uint y;
 	};
 
-#pragma GCC push_options
-#pragma GCC target ("avx")
+	[[gnu::target("avx")]]
 	inline bool calcPointVectorAVX_M2(vector<point>& points, uint fromPoint, uint toPoint) {
 		//AVX for Mandelbrot power 2
 		//AVX is used. Length 4 arrays and vectors are constructed to iterate 4 pixels at once. That means 4 x-values, 4 y-values, 4 c-values etc.
@@ -782,7 +768,7 @@ public:
 		}
 		return isSame;
 	}
-#pragma GCC pop_options
+//#pragma GCC pop_options
 	
 	#undef setPixelAndThisIter
 

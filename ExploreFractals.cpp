@@ -68,6 +68,8 @@ double random() {
 template <int procedure_identifier, bool use_avx, bool julia>
 void FractalCanvas::createNewRenderTemplated(uint renderID)
 {
+	assert( mP.get_procedure().id == procedure_identifier );
+
 	auto render = make_shared<Render<procedure_identifier, use_avx, julia>>(*this, renderID);
 	auto& R = *render.get();
 
@@ -79,7 +81,7 @@ void FractalCanvas::createNewRenderTemplated(uint renderID)
 		double_c juliaSeed = mP.get_juliaSeed();
 		cout << "-----New Render-----" << endl;
 		cout << "renderID: " << renderID << endl;
-		cout << "Procedure: " << mP.get_procedure().name() << endl;
+		cout << "Procedure: " << mP.get_procedure().name() << (julia ? " julia" : "") << (use_avx ? " (avx)" : "") << endl;
 		cout << "width: " << width << endl;
 		cout << "height: " << height << endl;
 		cout << "center: " << real(center) << " + " << imag(center) << " * I" << endl;
@@ -225,12 +227,14 @@ void animation(
 		P.setPartialInflectionCoord(thisInflectionCoord);
 
 		//gradually apply the next inflection by letting the inflection power go from 1 to 2, and meanwhile also gradually move to the next inflection location.
-		for (int i=0; i<framesPerInflection; i++) {
-			P.setCenterAndZoomAbsolute(0, (
+		for (int i=0; i<framesPerInflection; i++)
+		{
+			double zoom = (
 				P.get_inflectionZoomLevel()
 				* (1 / pow(2, P.get_inflectionCount()))
 				* (1 / P.get_partialInflectionPower())
-			));
+			);	
+			P.setCenterAndZoomAbsolute(0, zoom);
 			P.setCenter( currentCenter + diff * ((1.0 / (framesPerInflection-1)) * i) );
 
 			makeFrame(frame++, true);
@@ -278,13 +282,10 @@ std::string utf16_to_utf8(std::u16string utf16_string)
 }
 #endif
 
-#pragma GCC push_options
-#pragma GCC target ("avx")
+[[gnu::target("avx")]]
 uint64 getFeatureMask() {
 	return _xgetbv(0);
 }
-#pragma GCC pop_options
-
 
 int CALLBACK WinMain(
 	_In_ HINSTANCE hInstance,

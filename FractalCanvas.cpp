@@ -276,11 +276,11 @@ public:
 			return {true, false, ResizeResultType::Success};
 		}
 		else {
-			if ( ! (
+			if ( false == (
 				newWidth > 0
 				&& newHeight > 0
-				&& bitmap_size <= MAXIMUM_BITMAP_SIZE)
-			) {
+				&& bitmap_size <= MAXIMUM_BITMAP_SIZE
+			)) {
 				cout << "Size outside of allowed range." << endl;
 				cout << "width: " << newWidth << "  " << "height: " << newHeight << endl;
 				cout << "maximum allowed size: " << MAXIMUM_BITMAP_SIZE << endl;
