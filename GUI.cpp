@@ -795,8 +795,9 @@ public:
 
 //TODO: instead of these being constants, use slider.maximum() (or whatever the function is called) every time the value is needed so that at least coarse maximum can be changed by the user (fine and offset are not important to be user definable).
 constexpr uint COARSE_MAXIMUM = 150;
-constexpr uint FINE_MAXIMUM = 10000;
-constexpr uint OFFSET_MAXIMUM = 10000;
+//These should ideally be as high as possible. I lowered the values for better performance. A very sensitive slider cancels bitmap renders all the time for even the slightest move, causing none to finish. This can be perceived by the user as bad performance. What is a better solution?
+constexpr uint FINE_MAXIMUM = 250;
+constexpr uint OFFSET_MAXIMUM = 250;
 
 class FractalPanel : public EFPanelBase {
 public:
@@ -2415,8 +2416,8 @@ Fractalforums thread: https://fractalforums.org/other/55/explore-fractals-inflec
 				if (fractalpanel->fileAssociation) {
 					fractalpanel->fileAssociation = false; //a path is given, so remove an existing association
 					fractalpanel->fileModified = false;
-					associateFile(canvas, path);
 				}
+				associateFile(canvas, path);
 			}
 		}
 	}
