@@ -268,7 +268,7 @@ public:
 
 	bool setCenterAndZoomRelative(double_c newCenter, double zoom) {
 		bool changed = setCenterAndZoomPrivate(newCenter, zoom);
-		setRotation(rotation_angle); //This sets rotation to use the new center as its center of rotation, but not changing the angle
+		normalizeRotation(); //This sets rotation to use the new center as its center of rotation, but not changing the angle
 		modifiedCalculations |= changed;
 		return changed;
 	}
@@ -301,24 +301,31 @@ public:
 	}
 
 	bool setRotation(double angle) {
-		double normalized = normalize_angle(angle);
-		bool changed = false;
+		double normalized_angle = normalize_angle(angle);
+		bool changed = normalized_angle != rotation_angle;
 
-		if (normalized != rotation_angle) {
-			changed = true;
-			
+		if (changed) {
 			//There may be an existing rotation. This is the center of the viewport under that rotation:
 			double_c current_center = rotation(center);
 			//move to that location
 			setCenterAndZoomPrivate(current_center, get_zoomLevel());
 			//Using the center as the center of rotation makes sense for the user. Here also the new angle is set and the rotation_factor recomputed:
 			center_of_rotation = center;
-			rotation_angle = normalized;
+			rotation_angle = normalized_angle;
 			rotation_factor = exp(rotation_angle * 2*pi*I);
 		}
 
 		modifiedCalculations |= changed;;
 		return changed;
+	}
+
+	void normalizeRotation() {
+		double_c current_center = rotation(center);
+		//move to that location
+		setCenterAndZoomPrivate(current_center, get_zoomLevel());
+		//Using the center as the center of rotation makes sense for the user. Here also the new angle is set and the rotation_factor recomputed:
+		center_of_rotation = center;
+		rotation_factor = exp(rotation_angle * 2*pi*I);
 	}
 
 	inline double_c map(uint xPos, uint yPos) const {
@@ -517,7 +524,7 @@ public:
 		setRotation(0);
 		setCenterAndZoomAbsolute(0, inflectionZoomLevel*(1 / pow(2, inflectionCount)));
 		setRotation(oldAngle);
-		modifiedCalculations = true;
+		modifiedCalculations = true; //setRotation also sets this to true
 	}
 
 	void addInflection(uint xPos, uint yPos) {
@@ -551,7 +558,7 @@ public:
 
 	bool removeInflection() {
 		bool changed = false;
-		bool modifiedCalculations_copy = modifiedCalculations; //use a copy because setRotation changes modifiedCalculations too
+
 		if (inflectionCount > 0) {
 			inflectionCount--;
 			double_c newCenter = 0;
@@ -564,7 +571,8 @@ public:
 			setRotation(oldAngle);
 			changed = true;
 		}
-		modifiedCalculations = modifiedCalculations_copy || changed;
+
+		modifiedCalculations |= changed;
 		return changed;
 	}
 

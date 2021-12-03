@@ -170,6 +170,8 @@ public:
 		if(debug) cout << "deleting render " << renderID << endl;
 	}
 
+	void optimized_burning_ship_loop(uint&, double_c, double_c);
+
 	void addToThreadcount(int n) {
 		lock_guard<mutex> guard(threadCountChange);
 		threadCount += n;
@@ -322,9 +324,14 @@ public:
 					}
 				}
 			}
-			while (real(z)*real(z) + imag(z)*imag(z) < escapeRadiusSq && iterationCount < maxIters) {
-				z = EscapeTimeFormula<procedure_identifier>::apply(z, c);
-				iterationCount++;
+			if constexpr(procedure_identifier == BURNING_SHIP.id) {
+				optimized_burning_ship_loop(iterationCount, c, z);
+			}
+			else {
+				while (real(z)*real(z) + imag(z)*imag(z) < escapeRadiusSq && iterationCount < maxIters) {
+					z = EscapeTimeFormula<procedure_identifier>::apply(z, c);
+					iterationCount++;
+				}
 			}
 		}
 		if constexpr(procedure_identifier == CHECKERS.id) {
@@ -1242,5 +1249,24 @@ public:
 		return renderID;
 	}
 };
+
+#pragma float_control(except, off, push)  // disable exception semantics
+#pragma fenv_access(off, push)            // disable environment sensitivity
+#pragma float_control(precise, off, push) // disable precise semantics
+#pragma fp_contract(on, push)             // enable contractions
+template <int procedure_identifier, bool use_avx, bool julia>
+void Render<procedure_identifier, use_avx, julia>::optimized_burning_ship_loop(uint& iterationCount, double_c c, double_c z)
+{
+	constexpr double escapeRadiusSq = EscapeTimeFormula<procedure_identifier>::escapeRadiusSq;
+
+	while (real(z)*real(z) + imag(z)*imag(z) < escapeRadiusSq && iterationCount < maxIters) {
+		//z = EscapeTimeFormula<procedure_identifier>::apply(z, c);
+		z = pow((abs(real(z)) + abs(imag(z))*I), 2) + c;
+		iterationCount++;
+	}
+}
+#pragma float_control(pop)
+#pragma fenv_access(pop)
+#pragma fp_contract(pop)
 
 #endif
