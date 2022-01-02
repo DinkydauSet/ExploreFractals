@@ -555,10 +555,8 @@ public:
 
 		if (oversamplingIndex != -1)
 			oversamplingAmount.option(oversamplingIndex);
-		else {
-			cout << "instellen caption: " << to_string(show_amount) << endl;
+		else
 			oversamplingAmount.caption(to_string(show_amount));
-		}
 
 		//converter that shows many digits. to_string always gives 6 digits
 		auto format_double = [](double d, uint precision = 20) -> string
