@@ -47,9 +47,10 @@ constexpr bool GUESSED = true;
 template <int power>
 struct MandelbrotFormula
 {
+	static_assert(power != 1, "Mandelbrot power can't be 1.");
+
 	static constexpr double escapeRadiusSq = ([]()
-	{
-		static_assert(power != 1, "Mandelbrot power can't be 1.");
+	{	
 		return gcem::pow(2, 2.0 / (power-1));
 	})();
 
@@ -132,8 +133,6 @@ public:
 	const vector<double_c>& inflectionCoords;
 	const uint width;			uint getWidth() { return width; }
 	const uint height;			uint getHeight() { return height; }
-	const uint screenWidth;
-	const uint screenHeight;
 	const uint oversampling;
 	const double_c juliaSeed;
 	const uint maxIters;
@@ -154,10 +153,8 @@ public:
 	: canvas(canvasContext)
 	, renderID(renderID)
 	, inflectionCoords(canvas.P().get_inflectionCoords())
-	, width(canvas.P().get_width())
-	, height(canvas.P().get_height())
-	, screenWidth(canvas.P().get_screenWidth())
-	, screenHeight(canvas.P().get_screenHeight())
+	, width(canvas.P().width_canvas())
+	, height(canvas.P().height_canvas())
 	, oversampling(canvas.P().get_oversampling())
 	, juliaSeed(canvas.P().get_juliaSeed())
 	, maxIters(canvas.P().get_maxIters())
@@ -897,8 +894,7 @@ public:
 		uint size = (xmax - xmin - 1)*(ymax - ymin - 1); //the size of the part that still has to be calculated
 		
 		/*
-			This is to prevent creating new threads when the tile becomes so small that it's only a few pixels wide or high. That number pixels is hardcoded as 8 in this part:
-			(xmax - xmin) / oversampling < 8
+			This is to prevent creating new threads when the tile becomes so small that it's only a few pixels wide or high (fewer than NEW_TILE_THREAD_MIN_PIXELS).
 			
 			The problem with threads at that scale has to do with oversampling. Oversampling means there are multiple calculated points per pixel. If two tiles overlap with one pixel, and both tiles are being calculated by different threads, it can happen that a pixel color value is changed by 2 threads at the same time, leading to an incorrect result. By not creating new threads, the subdivision into smaller tiles can continue safely.
 
@@ -926,6 +922,30 @@ public:
 				goto returnLabel;
 			}
 		}
+		//todo: remove or keep experiment for showing better render progress
+		//if (size < 10100)
+		/*
+		{
+			IterData topleftcorner = canvas.getIterData(xmin, ymin);
+			for (uint x = xmin + 1; x < xmax; x++) {
+				for (uint y = ymin + 1; y < ymax; y++) {
+					canvas.setPixel(x, y, topleftcorner.iterationCount(), GUESSED, topleftcorner.inMinibrot());
+				}
+			}
+
+			int xborderCorrection = (xmax == width - 1 ? 0 : 1);
+			int yborderCorrection = (ymax == height - 1 ? 0 : 1);
+
+			int xfrom = xmin / oversampling;
+			int xto = (xmax - xborderCorrection) / oversampling + 1;
+			int yfrom = ymin / oversampling;
+			int yto = (ymax - yborderCorrection) / oversampling + 1;
+			assert(xfrom <= xto);
+			assert(yfrom <= yto);
+
+			canvas.renderBitmapRect(false, xfrom, xto, yfrom, yto, canvas.lastBitmapRenderID);
+		}
+		*/
 
 		if (size < MAXIMUM_TILE_SIZE) {
 			//The tile is now very small. Stop the recursion and iterate all pixels.

@@ -70,7 +70,7 @@ bool isfinite(double_c c) {
 
 //Constants
 
-constexpr double PROGRAM_VERSION = 9.2;
+constexpr double PROGRAM_VERSION = 10.0;
 constexpr uint NUMBER_OF_TRANSFORMATIONS = 7 + 1;
 constexpr uint MAXIMUM_TILE_SIZE = 50; //tiles in renderSilverRect smaller than this do not get subdivided.
 constexpr uint NEW_TILE_THREAD_MIN_PIXELS = 8; //For tiles with a width or height in PIXELS smaller than this no new threads are created, which has two reasons: 1. thread overhead; 2. See the explanation of stop_creating_threads in the function Render::renderSilverRect.
@@ -165,7 +165,6 @@ constexpr Procedure getProcedureObject(int id) {
 		case PURE_MORPHINGS.id:    return PURE_MORPHINGS;
 		case M512.id:              return M512;
 	}
-	//not found
 	return NOT_FOUND;
 }
 
@@ -206,7 +205,7 @@ inline uint8 getBValue(ARGB argb) {
 }
 
 inline ARGB rgbColorAverage(ARGB c1, ARGB c2, double ratio) {
-	//todo: I had to disable these asserts because they can fail when the parameters are changed during a render, which is fine. However, I'm not sure if it's good design to allow that. Most importantly I want speed. The program should not hang for a long time waiting for renders to cancel.
+	//dontdo: I had to disable these asserts because they can fail when the parameters are changed during a render, which is fine. However, I'm not sure if it's good design to allow that. Most importantly I want speed. The program should not hang for a long time waiting for renders to cancel.
 	//assert(ratio >= 0);
 	//assert(ratio <= 1);
 	return rgb(
@@ -222,7 +221,8 @@ This class is used in FractalCanvas to avoid depending on the windows api to res
 */
 class BitmapManager {
 public:
-	virtual ARGB* realloc(uint newScreenWidth, uint newScreenHeight) = 0;
+	virtual ARGB* realloc(uint width, uint height) = 0;
+	virtual ~BitmapManager() {}
 };
 
 class RenderInterface {
@@ -238,6 +238,8 @@ public:
 	virtual ProgressInfo getProgress() = 0;
 	virtual void* canvasPtr() = 0;
 	virtual uint getId() = 0;
+
+	virtual ~RenderInterface() {}
 };
 
 enum class ResizeResultType {
@@ -263,7 +265,6 @@ struct ResizeResult {
 */
 class GUIInterface {
 public:
-	//virtual void drawBitmap(void* canvas) = 0;
 	virtual void renderStarted(shared_ptr<RenderInterface> render) = 0;
 	virtual void renderFinished(shared_ptr<RenderInterface> render) = 0;
 	virtual void bitmapRenderStarted(void* canvas, uint bitmapRenderID) = 0;
@@ -271,6 +272,8 @@ public:
 	virtual void parametersChanged(void* canvas, int source_id) = 0;
 	virtual void canvasSizeChanged(void* canvas) = 0;
 	virtual void canvasResizeFailed(void* canvas, ResizeResult result) = 0;
+
+	virtual ~GUIInterface() {}
 };
 
 #endif

@@ -50,19 +50,16 @@
 #include "scrollpanel.cpp"
 
 
+static_assert(sizeof(WPARAM) == 8, "In this code WPARAM is assumed to be 8 bytes.");
+static_assert(sizeof(LPARAM) == 8, "In this code LPARAM is assumed to be 8 bytes.");
+
+
 namespace GUI {
 	
 using namespace nana;
 
 GUIInterface* theOnlyNanaGUI; //This will be a pointer to a main_form. FractalCanvas instances don't need to know that it's a main_form. It could be "any" GUIInterface.
 HWND main_form_hwnd;
-
-window helpwindow = nullptr;
-window jsonwindow = nullptr;
-
-mutex refreshThreads;
-mutex helpwindow_mutex;
-mutex jsonwindow_mutex;
 
 namespace EFcolors {
 	const color darkblue = color(10, 36, 106);
@@ -108,6 +105,8 @@ namespace EventSource {
 		,speedMouseUp
 		,offsetMouseUp
 		,rotationSliderMouseUp
+		,bitmapZoom
+		,JSON
 	};
 }
 
@@ -131,6 +130,7 @@ namespace Message {
 	constexpr uint SHOW_PROGRESS_UNFINISHED =	WM_APP + 8;	//RenderInterface*
 	constexpr uint DRAW_BITMAP =					WM_APP + 9;	//FractalCanvas*
 	constexpr uint CLEANUP_FRACTAL_TAB =			WM_APP + 10;	//FractalCanvas*
+	constexpr uint CLEANUP_CHILD_WINDOW =		WM_APP + 11;//child_window_base*
 }
 
 /*
@@ -160,9 +160,6 @@ void refreshDuringRender(shared_ptr<RenderInterface> render, FractalCanvas* canv
 			if(debug) cout << "refreshDuringRender " << renderID << " has lock drawingBitmap" << endl;
 
 			if (canvas->lastRenderID == renderID) { //to prevent drawing after the render is already finished, because a drawing is already made immediately after the render finishes. This also prevents an otherwise possible crash: After the immediate drawing, the Render object gets destroyed. Referencing it here can then cause a crash.
-
-				static_assert(sizeof(WPARAM) == 8, "In this code WPARAM is assumed to be 8 bytes.");
-				static_assert(sizeof(LPARAM) == 8, "In this code LPARAM is assumed to be 8 bytes.");
 
 				//This notifies the GUI thread that it should update the render progress. The WPARAM parameter for the SHOW_PROGRESS_UNFINISHED message is a pointer to the RenderInterface. Because SendMessage blocks the current thread until the message is handled, the pointer can be used safely.
 				SendMessage(main_form_hwnd, Message::SHOW_PROGRESS_UNFINISHED, reinterpret_cast<WPARAM>(render.get()), 0);
@@ -217,8 +214,12 @@ public:
 	, drawingContext(drawingContext)
 	{}
 
-	ARGB* realloc(uint newScreenWidth, uint newScreenHeight) {
-		nana::size size(newScreenWidth, newScreenHeight);
+	~NanaBitmapManager() {
+		if(debug) cout << "destroying NanaBitmapManager" << endl;
+	}
+
+	ARGB* realloc(uint width, uint height) {
+		nana::size size(width, height);
 
 		graph = paint::graphics(size);
 
@@ -228,9 +229,9 @@ public:
 		BITMAP bitmap = dib.dsBm;
 		ptPixels = (ARGB*)bitmap.bmBits;
 
-		width = newScreenWidth;
-		height = newScreenHeight;
-		cout << "reallocated NanaBitmapManager to " << newScreenWidth << " " << newScreenHeight << endl;
+		this->width = width;
+		this->height = height;
+		cout << "reallocated NanaBitmapManager to " << width << " " << height << endl;
 		return ptPixels;
 	}
 
@@ -319,11 +320,11 @@ namespace NumberInput
 */
 class linelabel : public label {
 public:
-	drawing dw {*this};
+	drawing dw{ *this };
 	linelabel(window wd, string_view text, color line_color = EFcolors::darkblue) : label(wd, text)
 	{
 		text_align(align::center, align_v::center);
-		dw.draw([&, this, line_color](paint::graphics& graph)
+		dw.draw([this, line_color](paint::graphics& graph)
 		{
 			nana::size text_size = graph.text_extent_size( caption() );
 			int lineHeight = size().height / 2;
@@ -350,7 +351,7 @@ const vector<int> post_transformation_ids {
 };
 
 //Oversampling options that can be selected in the settings panel
-const vector<uint> oversamplingOptions {1, 2, 3, 4, 6, 8, 12, 16};
+const vector<uint> oversamplingOptions {1, 2, 3, 4, 6, 8, 12};
 
 
 class SettingsPanel : public panel<true> {
@@ -358,9 +359,11 @@ public:
 	place pl{ *this };
 
 	linelabel sizeLabel{ *this, "Size" };
-	NumberInput::natural screenWidth{ *this, "width" }; label widthLabel{ *this, "width" };
-	NumberInput::natural screenHeight{ *this, "height" }; label heightLabel{ *this, "height" };
-	combox oversampling{ *this }; label oversamplingLabel{ *this, "Oversampling" };
+	NumberInput::natural width{ *this, "width" }; label widthLabel{ *this, "width" };
+	NumberInput::natural height{ *this, "height" }; label heightLabel{ *this, "height" };
+	label oversamplingLabel{ *this, "Oversampling" };
+	combox oversamplingAmount{ *this }; label amountLabel{ *this, "amount" };
+	checkbox undersampling{ *this, "undersampling" };
 
 	linelabel procedureLabel{ *this, "Procedure" };
 	menubar procedure{ *this };
@@ -380,11 +383,11 @@ public:
 
 	linelabel parametersLabel{ *this, "Parameters" };
 	NumberInput::real zoomLevel{ *this, "Zoom level" }; label zoomLevelLabel{ *this, "Zoom level" };
-	slider rotation{ *this }; label rotationLabel{ *this, "Rotation" };
+	NumberInput::real rotation{ *this, "between 0 and 1" }; label rotationLabel{ *this, "Rotation" };
 	NumberInput::real centerRe{ *this, "Real coordinate" }; label centerReLabel{ *this, "Re" };
 	NumberInput::real centerIm{ *this, "Imaginary coordinate" }; label centerImLabel{ *this, "Im" };
 	checkbox julia{ *this, "julia" };
-	linelabel juliaSeedLabel{ *this, "Julia seed", EFcolors::normalgrey };
+	label juliaSeedLabel{ *this, "Julia seed" };
 	NumberInput::real juliaRe{ *this, "Real coordinate" }; label juliaReLabel{ *this, "Re" };
 	NumberInput::real juliaIm{ *this, "Imaginary coordinate" }; label juliaImLabel{ *this, "Im" };
 
@@ -402,7 +405,8 @@ public:
 				{
 					P.setProcedure(id);
 				}, EventSource::procedure);
-				return refreshProcedureSelection(id);
+				
+				refreshProcedureSelection(id);
 			});
 		}
 		this->chosen_procedure = chosen_procedure;
@@ -420,7 +424,8 @@ public:
 				{
 					P.setPostTransformation(id);
 				}, EventSource::post_transformation);
-				return refreshPostTransformationSelection(id);
+				
+				refreshPostTransformationSelection(id);
 			});
 		}
 		this->chosen_post_transformation = chosen_post_transformation;
@@ -428,26 +433,20 @@ public:
 
 	SettingsPanel(window wd) : panel<true>(wd)
 	{
+		juliaSeedLabel.text_align(align::center, align_v::center);
+		oversamplingLabel.text_align(align::center, align_v::center);
+
 		procedure.bgcolor(colors::white);
 		post_transformation.bgcolor(colors::white);
 		refreshProcedureSelection(M2.id);
 		refreshPostTransformationSelection(0);
 
-		for (int oversampling_ : oversamplingOptions)
-			oversampling.push_back( to_string(oversampling_) );
+		for (int option : oversamplingOptions) {
+			oversamplingAmount.push_back( to_string(option) );
+		}
 
-		oversampling.editable(true);
-		oversampling.set_accept(acceptNatural);
-
-		rotation.maximum(10000);
-		rotation.events().mouse_up([this](const arg_mouse& arg)
-		{
-			canvas->changeParameters([this](FractalParameters& P)
-			{
-				double rotation_ = rotation.value() / 10000.0;
-				P.setRotation(rotation_);
-			}, EventSource::rotation);
-		});
+		oversamplingAmount.editable(true);
+		oversamplingAmount.set_accept(acceptInteger);
 
 		// Let the enter key apply changes (needs to be set for each widget separately)
 		API::enum_widgets(*this, true, [this](widget& wdg)
@@ -470,7 +469,9 @@ public:
 			<sizelabel weight=25 margin=2>
 			<width_ weight=25 margin=2 arrange=[30%, variable]>
 			<height_ weight=25 margin=2 arrange=[30%, variable]>
-			<oversampling weight=25 margin=2 arrange=[70%, variable]>
+			<oversamplinglabel weight=25 margin=2>
+			<oversampling_amount weight=25 margin=2 arrange=[70%, variable]>
+			<undersampling weight=25 margin=2>
 
 			<behaviorlabel weight=25 margin=2>
 			<maxiters weight=25 margin=2 arrange=[40%, variable]>
@@ -482,7 +483,7 @@ public:
 
 			<parameterslabel weight=25 margin=2>
 			<zoomlevel weight=25 margin=2 arrange=[50%, variable]>
-			<rotation weight=25 margin=2 arrange=[35%, variable]>
+			<rotation weight=25 margin=2 arrange=[50%, variable]>
 			<centerre weight=25 margin=2 arrange=[15%, variable]>
 			<centerim weight=25 margin=2 arrange=[15%, variable]>
 			<julia weight=25 margin=2>
@@ -497,9 +498,11 @@ public:
 		pl["post_transformation"] << post_transformation;
 
 		pl["sizelabel"] << sizeLabel;
-		pl["width_"] << widthLabel << screenWidth;
-		pl["height_"] << heightLabel << screenHeight;
-		pl["oversampling"] << oversamplingLabel << oversampling;
+		pl["width_"] << widthLabel << width;
+		pl["height_"] << heightLabel << height;
+		pl["oversamplinglabel"] << oversamplingLabel;
+		pl["oversampling_amount"] << amountLabel << oversamplingAmount;
+		pl["undersampling"] << undersampling;
 		
 		pl["behaviorlabel"] << behaviorLabel;
 		pl["maxiters"] << maxItersLabel << maxIters;
@@ -525,23 +528,37 @@ public:
 	}
 
 	void setParameters(const FractalParameters& P) {
-		screenWidth.caption(to_string(P.get_screenWidth()));
-		screenHeight.caption(to_string(P.get_screenHeight()));
+		width.caption(to_string(P.get_target_width()));
+		height.caption(to_string(P.get_target_height()));
+
+		int show_amount = P.get_bitmap_zoom() > 1 ? P.get_bitmap_zoom() : P.get_oversampling();
+		if (
+			P.get_bitmap_zoom() > 1 && undersampling.checked() == false
+			|| (
+				P.get_bitmap_zoom() == 1
+				&& P.get_oversampling() > 1 && undersampling.checked()
+			)
+		) {
+			show_amount = -show_amount;
+		}
 
 		//would be simpler if vector had a indexOf(elt) method
 		int oversamplingIndex = ([&]()
 		{
 			for (int i=0; i<oversamplingOptions.size(); i++) {
-				if (P.get_oversampling() == oversamplingOptions[i]) {
+				if (show_amount == oversamplingOptions[i]) {
 					return i;
 				}
 			}
 			return -1;
 		})();
+
 		if (oversamplingIndex != -1)
-			oversampling.option(oversamplingIndex);
-		else
-			oversampling.caption(to_string(P.get_oversampling()));
+			oversamplingAmount.option(oversamplingIndex);
+		else {
+			cout << "instellen caption: " << to_string(show_amount) << endl;
+			oversamplingAmount.caption(to_string(show_amount));
+		}
 
 		//converter that shows many digits. to_string always gives 6 digits
 		auto format_double = [](double d, uint precision = 20) -> string
@@ -557,8 +574,8 @@ public:
 		inflectionZoomLevel.caption(			format_double(P.get_inflectionZoomLevel(), 6)	);
 		gradientSpeed.caption(				format_double(P.get_gradientSpeed(), 10)			);
 		gradientOffset.caption(				format_double(P.get_gradientOffset(), 10)		);
-		zoomLevel.caption(					format_double(P.get_zoomLevel(), 6)				);
-		rotation.value(						P.get_rotation_angle() * 10000					);
+		zoomLevel.caption(					format_double(P.get_zoomLevel(), 10)				);
+		rotation.caption(					format_double(P.get_rotation_angle(), 6)			);
 		centerRe.caption(					format_double(real(P.get_center()))				);
 		centerIm.caption(					format_double(imag(P.get_center()))				);
 		julia.check(							P.get_julia()									);
@@ -569,18 +586,34 @@ public:
 	void parametersFromFields() {
 		int i = -1;
 		try {
-			i=1;  int screenWidth_ = screenWidth.to_int(); if(screenWidth_ <= 0) throw invalid_argument("");
-			i=2;  int screenHeight_ = screenHeight.to_int(); if(screenHeight_ <= 0) throw invalid_argument("");
-			i=3;  int oversampling_ = stoi(oversampling.caption()); if(oversampling_ <= 0) throw invalid_argument("");
+			i=1;  int width_ = width.to_int(); if(width_ <= 0) throw invalid_argument("");
+			i=2;  int height_ = height.to_int(); if(height_ <= 0) throw invalid_argument("");
+			i=3;  int oversampling_ = stoi(oversamplingAmount.caption()); if(oversampling_ == 0) throw invalid_argument("");
 			i=4;  int maxIters_ = maxIters.to_int(); if(maxIters_ <= 0) throw invalid_argument("");
 			i=5;  double inflectionZoomLevel_  = inflectionZoomLevel.to_double();
 			i=6;  double_c center_ = centerRe.to_double() + centerIm.to_double() * I;
 			i=7;  double zoomLevel_ = zoomLevel.to_double();
-			i=8;  double rotation_ = rotation.value() / 10000.0;
+			//1100100 is arbitrary. I want to allow values outside of the range 0 to 1 but it must not become too crazy, otherwise FractalParameters::normalize_angle fails.
+			i=8;  double rotation_ = rotation.to_double(); if(rotation_ > 1100100 || rotation_ < -1100100) throw invalid_argument("");
 			i=9;  double_c juliaSeed_ = juliaRe.to_double() + juliaIm.to_double() * I;
 			i=10; bool julia_ = julia.checked();
 			i=11; double gradientSpeed_ = gradientSpeed.to_double();
 			i=12; double gradientOffset_ = gradientOffset.to_double();
+			i=13; bool undersampling_ = undersampling.checked();
+
+			// This allows to set undersampling by choosing negative oversampling too.
+			if (undersampling_)
+				oversampling_ = -oversampling_;
+
+			uint bitmap_zoom_;
+			if (oversampling_ > 0) {
+				bitmap_zoom_ = 1;
+				oversampling_ = oversampling_;
+			}
+			else {
+				bitmap_zoom_ = -oversampling_;
+				oversampling_ = 1;
+			}
 			
 			int source_id = ([=]()
 			{
@@ -588,7 +621,7 @@ public:
 				int source_id = EventSource::default_;
 				uint changeCount = 0;
 
-				if (P.get_screenWidth() != screenWidth_ || P.get_screenHeight() != screenHeight_ || P.get_oversampling() != oversampling_) {
+				if (P.get_target_width() != width_ || P.get_target_height() != height_ || P.get_oversampling() != oversampling_ || P.get_bitmap_zoom() != bitmap_zoom_) {
 					source_id = EventSource::size;
 					changeCount++;
 				}
@@ -638,7 +671,7 @@ public:
 			canvas->changeParameters([=](FractalParameters& P)
 			{
 				P.setProcedure(chosen_procedure);
-				P.resize(oversampling_, screenWidth_, screenHeight_);
+				P.resize(width_, height_, oversampling_, bitmap_zoom_);
 				P.setMaxIters(maxIters_);
 				P.setInflectionZoomLevel(inflectionZoomLevel_);
 				P.setCenterAndZoomRelative(center_, zoomLevel_);
@@ -648,6 +681,8 @@ public:
 				P.setGradientOffset( P.normalize_gradientOffset(gradientOffset_) );
 				P.setGradientSpeed(gradientSpeed_);
 			}, source_id);
+
+			
 		}
 		//catch errors in the fields, such as invalid numbers like 3..141a.
 		catch (...) {
@@ -663,7 +698,7 @@ public:
 					case 7:  return "invalid zoomLevel";
 					case 8:  return "invalid rotation";
 					case 9:  return "invalid juliaSeed";
-					//case 10: cout << "invalid juliaSeed" << endl; break;
+					//case 10
 					case 11: return "invalid gradientSpeed";
 					case 12: return "invalid gradientOffset";
 				}
@@ -702,6 +737,8 @@ public:
 		//the column names
 		append_header("n");      
 		append_header("action");
+
+		this->sortable(false); //the user can't sort
 
 		this->sort_col(0, true);
 
@@ -760,10 +797,6 @@ public:
 		item.index = lastIndex;
 		item.is_new = true;
 
-		if (lastIndex > 9999) { //todo: adjustable limit for history. This 9999 takes ~50 MB of memory (measured).
-			erase(at(0).begin());
-		}
-
 		// I find this notation confusing.
 		// This creates a new row with to_string(lastIndex) in the 0th column, the string name in the 1st column, and associates the HistoryItem item with that row.
 		at(0)
@@ -789,11 +822,12 @@ enum class TabKind {
 //
 class EFPanelBase : public panel<false> {
 public:
-	virtual TabKind kind() = 0;
 	EFPanelBase(window wd) : panel<false>(wd) {}
+	virtual TabKind kind() = 0;
+	virtual ~EFPanelBase() {}
 };
 
-//TODO: instead of these being constants, use slider.maximum() (or whatever the function is called) every time the value is needed so that at least coarse maximum can be changed by the user (fine and offset are not important to be user definable).
+//dontdo: instead of these being constants, use slider.maximum() (or whatever the function is called) every time the value is needed so that at least coarse maximum can be changed by the user (fine and offset are not important to be user definable).
 constexpr uint COARSE_MAXIMUM = 150;
 //These should ideally be as high as possible. I lowered the values for better performance. A very sensitive slider cancels bitmap renders all the time for even the slightest move, causing none to finish. This can be perceived by the user as bad performance. What is a better solution?
 constexpr uint FINE_MAXIMUM = 250;
@@ -807,6 +841,14 @@ public:
 	// contains sidebar
 	// contains settings.visible
 	// contains content
+
+	//dontdo: use this when constexpr string is available to get rid of some hardcoded numbers in the nana div text
+	//static constexpr uint sidebar_width = 180;
+	//static constexpr uint json_width = 220;
+	static constexpr uint scrollbarWeight = 20; //this value is still hardcoded in some other places
+	//The reason using these values in div text doesn't work is that place::modify requires a const char*, for example:
+	//pl.modify("sidebar", "weight=180");
+	//The part "weight=180" needs to be const char*. It's not possible to construct a string there based on a value. I hope constexpr string will solve that problem. I'm not 100% sure.
 
 	class Sidebar : public panel<true> {
 	public:
@@ -877,8 +919,6 @@ public:
 	shared_ptr<NanaBitmapManager> bitmapManager;
 	FractalCanvas canvas; //canvas is intentionally the last class member, so that the destructor of FractalPanel destroys it first. ~FractalCanvas will wait until all threads using the canvas are finished, and those threads may also use other members of this class.
 
-	static constexpr uint scrollbarWeight = 20; //this value is still hardcoded in some other places
-
 	~FractalPanel() {
 		cout << "FractalPanel with canvas " << &canvas << " is being deleted" << endl;
 	}
@@ -915,13 +955,16 @@ public:
 		pl.collocate();
 
 		//
-		//	Copies a part of the bitmap to the screen, depending on the position of the scrollbars. If the whole bitmap fits (and there are no scrollbars), the whole bitmap gets copied. Otherwise, only the part that should be visible is copied.
+		//	Copies the bitmap (the fractal's pixels) to the screen (the given graph), offset by the position of the scrollbars (which determine offsetX and offsetY) if there are any.
 		//
 		dw->draw([&, this](paint::graphics& graph)
 		{
-			paint::graphics& g = bitmapManager->graph;
-			rectangle renderPart(0,0,canvas.P().get_screenWidth(), canvas.P().get_screenHeight());
-			graph.bitblt(renderPart, g, point(offsetX, offsetY));
+			uint width = canvas.P().width_bitmap();
+			uint height = canvas.P().height_bitmap();
+			
+			paint::graphics& g = bitmapManager->graph; //the graphics object of the bitmap
+			rectangle whole_bitmap(0, 0, width, height); //the part of the bitmap to display on the screen
+			graph.bitblt(whole_bitmap, g, point(offsetX, offsetY));
 		});
 
 		hscrollbar.step(40);
@@ -943,11 +986,13 @@ public:
 			recalculateScrollbars();
 		});
 
-		sidebar.apply.events().click([this]()
+
+		//Sidebar events
+		sidebar.apply.events().click([this](const arg_click& arg)
 		{
 			sidebar.settings.content.parametersFromFields();
 		});
-		sidebar.cancel.events().click([this]()
+		sidebar.cancel.events().click([this](const arg_click& arg)
 		{
 			sidebar.settings.content.setParameters(canvas.P());
 		});
@@ -960,6 +1005,7 @@ public:
 		fine.maximum(FINE_MAXIMUM);
 		offset.maximum(OFFSET_MAXIMUM);
 
+		//Slider events
 		//
 		// I use this to control when history items are made. I don't want there to be tens of history items per second when the user moves the gradient sliders around. A history item should only be made when the mouse button is released.
 		//
@@ -1021,17 +1067,21 @@ public:
 		});
 
 		offset.events().mouse_up(onOffsetMouseUp);
-		
 
+
+		//add/remove inflection
 		fractal.events().mouse_up([this](const arg_mouse& arg)
 		{
 			const FractalParameters& P = canvas.P();
 
-			uint oversampling = P.get_oversampling();
-			uint xPos = (arg.pos.x + offsetX) * oversampling;
-			uint yPos = (arg.pos.y + offsetY) * oversampling;
+			const uint& oversampling = P.get_oversampling();
+			const uint& bitmap_zoom = P.get_bitmap_zoom();
 
-			if ( ! (xPos < 0 || xPos > P.get_width() || yPos < 0 || yPos > P.get_height())) {
+			//location of the click in the FractalCanvas
+			int xPos = (arg.pos.x + offsetX) * oversampling / bitmap_zoom;
+			int yPos = (arg.pos.y + offsetY) * oversampling / bitmap_zoom;
+
+			if ( ! (xPos < 0 || xPos > P.width_canvas() || yPos < 0 || yPos > P.height_canvas())) {
 				if (arg.button == mouse::left_button)
 				{
 					canvas.changeParameters([=](FractalParameters& P)
@@ -1051,15 +1101,22 @@ public:
 			}
 		});
 
+		//zoom action
 		fractal.events().mouse_wheel([this](const arg_wheel& arg)
 		{
-			//zoom action
-			uint screenWidth = canvas.P().get_screenWidth();
-			uint screenHeight = canvas.P().get_screenHeight();
+			const uint oversampling = canvas.P().get_oversampling();
+			const uint bitmapWidth = canvas.P().width_bitmap();
+			const uint bitmapHeight = canvas.P().height_bitmap();
+			const uint bitmap_zoom = canvas.P().get_bitmap_zoom();
 
+			//location of the click in the bitmap
 			int xPos = arg.pos.x + offsetX;
 			int yPos = arg.pos.y + offsetY;
-			if (xPos < 0 || xPos > screenWidth || yPos < 0 || yPos > screenHeight) {
+
+			if (
+				xPos < 0		|| xPos > bitmapWidth
+				|| yPos < 0 || yPos > bitmapHeight
+			) {
 				return;
 			}
 
@@ -1067,49 +1124,52 @@ public:
 
 			bool zoomIn = arg.upwards;
 			{
+				//generate preview of the zoomed in fractal
 				paint::graphics panel_graphics;
 				API::window_graphics(fractal.handle(), panel_graphics);
 				paint::graphics& bitmap_graphics = bitmapManager->graph;
 			
 				if (zoomIn) {
 					rectangle fromPart(
-						xPos - xPos / 4 - offsetX
-						,yPos - yPos / 4 - offsetY
-						,screenWidth / 4
-						,screenHeight / 4
+						xPos - xPos / 4 - offsetX	,yPos - yPos / 4 - offsetY
+						,bitmapWidth / 4				,bitmapHeight / 4
 					);
-					rectangle toPart(0, 0, screenWidth, screenHeight);
+					rectangle toPart(0, 0, bitmapWidth, bitmapHeight);
 					panel_graphics.stretch(fromPart, bitmap_graphics, toPart);
 				}
 				else {
-					rectangle fromPart(0 - offsetX, 0 - offsetY, screenWidth, screenHeight);
+					rectangle fromPart(
+						0 - offsetX		,0 - offsetY
+						,bitmapWidth		,bitmapHeight
+					);
 					rectangle toPart(
-						xPos - xPos / 4
-						,yPos - yPos / 4
-						,screenWidth / 4
-						,screenHeight / 4
+						xPos - xPos / 4		,yPos - yPos / 4
+						,bitmapWidth / 4		,bitmapHeight / 4
 					);
 					panel_graphics.stretch(fromPart, bitmap_graphics, toPart);
 				}
+
+				//Confusing thing about nana:
+				//With bitblt x.bitblt(..., y... means x is the destination and y is the source
+				//With stretch, x.stretch(..., y... means y is the destination and x is the source
 			}
 
 			canvas.changeParameters([=](FractalParameters& P)
 			{
-				uint oversampling = P.get_oversampling();
-				uint width = P.get_width();
-				uint height = P.get_height();
+				const uint width = P.width_canvas();
+				const uint height = P.height_canvas();
 
 				double zooms = zoomIn ? 2 : -2; //these 2 and -2 are the zoom sizes used for zooming in and out. They could be any number so it could be a setting.
 				double magnificationFactor = pow(2, -zooms);
 
-				double_c zoomLocation = canvas.map(xPos * oversampling, yPos * oversampling);
+				double_c zoomLocation = canvas.map(xPos * oversampling / bitmap_zoom, yPos * oversampling / bitmap_zoom);
 
 				//This is the difference between the location that is being zoomed in on (the location of the mouse cursor) and the right and top borders of the viewport, expressed as a fraction.
-				double margin_right = xPos / (double)screenWidth;
-				double margin_top = yPos / (double)screenHeight;
+				double margin_right = xPos / (double)bitmapWidth;
+				double margin_top = yPos / (double)bitmapHeight;
 				 
-				double margin_right_size = width * margin_right * P.get_pixelWidth();
-				double margin_top_size = height * margin_top * P.get_pixelHeight();
+				double margin_right_size = width * margin_right * P.get_x_spacing();
+				double margin_top_size = height * margin_top * P.get_y_spacing();
 
 				double margin_right_new_size = margin_right_size * magnificationFactor;
 				double margin_top_new_size = margin_top_size * magnificationFactor;
@@ -1167,7 +1227,7 @@ public:
 		if (include_color_sliders)
 		{
 			double gradientSpeed = canvas.P().get_gradientSpeed();
-			coarse.value((int)gradientSpeed + 50); //todo: make this 50 a setting?
+			coarse.value((int)gradientSpeed + 50); //dontdo: make this 50 a setting?
 
 			if ((int)gradientSpeed >= 0)
 				fine.value(FINE_MAXIMUM * (gradientSpeed - (int)gradientSpeed));
@@ -1180,8 +1240,8 @@ public:
 
 	void recalculateScrollbars()
 	{
-		const uint screenWidth = canvas.P().get_screenWidth();
-		const uint screenHeight = canvas.P().get_screenHeight();
+		const uint bitmapWidth = canvas.P().width_bitmap();
+		const uint bitmapHeight = canvas.P().height_bitmap();
 
 		//hscrollbar.visible() is not reliable to check if it's there. For some reason, hidden scrollbars later are reported visible by this function.
 		bool has_hscrollbar = hscrollbar.size().height > 0;
@@ -1190,12 +1250,12 @@ public:
 		uint availableHeight = fractal.size().height + (has_hscrollbar ? scrollbarWeight : 0);
 		uint availableWidth = fractal.size().width + (has_vscrollbar ? scrollbarWeight : 0);
 
-		bool requiredX = availableWidth < screenWidth;
-		bool requiredY = availableHeight < screenHeight;
+		bool requiredX = availableWidth < bitmapWidth;
+		bool requiredY = availableHeight < bitmapHeight;
 
 		//The horizontal scrollbar may be needed anyway just because the vertical scrollbar takes up space. The same goes for the vertical scrollbar.
-		requiredX = availableWidth - (requiredY ? scrollbarWeight : 0) < screenWidth;
-		requiredY = availableHeight - (requiredX ? scrollbarWeight : 0) < screenHeight;
+		requiredX = availableWidth - (requiredY ? scrollbarWeight : 0) < bitmapWidth;
+		requiredY = availableHeight - (requiredX ? scrollbarWeight : 0) < bitmapHeight;
 
 		bool changed = false;
 		
@@ -1227,9 +1287,9 @@ public:
 		if (changed)
 			pl.collocate();
 
-		//When the window is enlarged, this makes sure the new space is used by the bitmap by adjusting the offset. Without this, the bitmap remains scrolled.
-		int emptyPanelSpaceX = fractal.size().width - (screenWidth - offsetX);
-		int emptyPanelSpaceY = fractal.size().height - (screenHeight - offsetY);
+		//When the window is enlarged, this makes the new space used by the bitmap by adjusting the offset. Without this, the bitmap remains scrolled.
+		int emptyPanelSpaceX = fractal.size().width - (bitmapWidth - offsetX);
+		int emptyPanelSpaceY = fractal.size().height - (bitmapHeight - offsetY);
 
 		if (emptyPanelSpaceX > 0) {
 			offsetX = max({0, offsetX - emptyPanelSpaceX});
@@ -1240,12 +1300,12 @@ public:
 
 		hscrollbar.range(fractal.size().width);
 		vscrollbar.range(fractal.size().height);
-		hscrollbar.amount(screenWidth);
-		vscrollbar.amount(screenHeight);
+		hscrollbar.amount(bitmapWidth);
+		vscrollbar.amount(bitmapHeight);
 	}
 };
 
-//TODO: this is unused. The intention is to make a tabpage for program settings.
+//dontdo: this is unused. The intention is to make a tabpage for program settings.
 class ProgramSettingsPanel : public EFPanelBase {
 public:
 	TabKind kind() { return TabKind::Settings; }
@@ -1280,7 +1340,7 @@ public:
 */
 class EFtabbar {
 public:
-	uint number_of_threads; //todo: I store this value in multiple places. I need it here so I store it here but... not nice
+	uint number_of_threads; //dontdo: I store this value in multiple places. I need it here so I store it here but... not nice
 
 	vector<shared_ptr<EFPanelBase>> panels; //index i in this vector contains the panel of the tab at index i in the tabbar
 	unordered_map<FractalCanvas*, shared_ptr<EFPanelBase>> canvas_panel_map; //to answer the question: what is the panel that contains this canvas?
@@ -1513,11 +1573,102 @@ void handleReadResult(window wd, ReadResult res) {
 }
 
 
+class help_form : public form {
+public:
+	place& pl{ get_place() };
+	textbox text{ *this, (
+R"(Inflections / morphings
+
+This program is made to test the effect of Julia morphings / inflections. A click adds an inflection at the clicked location in the fractal. An inflection is a transformation of the complex plane, which corresponds to how shapes in the Mandelbrot set are related to each other. Deeper shapes are Julia transformed versions of lesser deep shapes at the same zoom path.
+
+
+Save inflection zoom
+
+Sets the base zoom level to which the program resets after applying an inflection. Without using this setting, the zoomlevel goes back to 0 after creating an inflection. The zoom level is automatically corrected for the number of inflections, because an inflection halves the distance (the exponent in the magnification factor) to deeper shapes.
+
+
+Coarse and fine
+
+Both control gradient speed. Fine is just finer. The gradient speed controls the number of interpolated colors in the color gradient. Every pixel of the fractal is independently colored based on its iteration count. The color index in the gradient is calculated by (iterationcount of the pixel) mod (number of colors in the gradient).
+
+
+Procedures
+
+Checkers - A checkerboard pattern to test inflections on a tiling pattern, which can also be found in the Mandelbrot set. The circles are a crude simulation of "details" like in the Mandelbrot set.
+
+Pure Julia morphings - starts as a completely empty plane. Add Julia morphings to transform the plane. The iteration count - which determines the color - in this procedure is the number of Julia morphings until the pixel escapes. The procedure iterates over the list of Julia morphings, instead of iterating the same formula all the time (as with the normal Mandelbrot set).
+
+Triple matchmaker - A formula by Pauldelbrot at fractalforums.org. This fractal doesn't have a notion of escaping. The number of iterations is constant for every pixel. Therefore, changing the max iterations changes the result.
+
+
+Keyboard shortcuts
+
+CTRL + Z and CTRL + Y - move back and forward in the history
+CTRL + T - create a new tab
+CTRL + D - duplicate the current tab
+CTRL + W - close the current tab
+CTRL + TAB and CTRL + SHIFT + TAB - go to the next or previous tab
+
+
+Using a default parameter file
+
+Use the program to save a parameter file called default.efp to the directory from where you start the program. The program will use the parameters as default for new tabs.
+
+
+Using commandline parameters
+
+The program also has commandline parameters to render images and Julia morphing animations. Start the program from a commandline like this to get help:
+ExploreFractals.exe --help)"
+	)};
+
+	help_form() : form( API::make_center(400, 800) )
+	{
+		caption("Help");
+
+		text.line_wrapped(true);
+		text.editable(false);
+		text.enable_caret();
+		div("x");
+		pl["x"] << text;
+		pl.collocate();
+	}
+};
+
+
+class json_form : public form {
+public:
+	place& pl{ get_place() };
+
+	textbox text{ *this };
+	button capture{ *this, "Capture" };
+	button apply{ *this, "Apply" };
+
+	json_form() : form( API::make_center(400, 800)  )
+	{
+		caption("JSON");
+
+		text.line_wrapped(true);
+		text.enable_caret();
+		text.set_keywords("special", false, false, { "{", "}", ":", "[", "]" });
+		text.set_highlight("special", colors::blue, colors::white);
+		text.scheme().mouse_wheel.lines = 8; //dontdo: this doesn't work; may be a bug in nana. Scrolling scrolls only 1 line at a time which is a little annoying.
+
+		pl.div(R"(
+			vert
+			<text>
+			<buttons weight=20>
+		)");
+		pl["text"] << text;
+		pl["buttons"] << capture << apply;
+		pl.collocate();
+	}
+};
+
 
 class main_form : public form, public GUIInterface
 {
 public:
-	place& pl;
+	place& pl{ get_place() };
 
 	panel<false> tabpanel{ *this };
 	place tabpanel_pl;
@@ -1534,9 +1685,9 @@ public:
 	button toggleJulia{ *this, "Toggle Julia" };
 	button leftButton{ *this, "Left"};
 	button rightButton{ *this, "Right" };
-	button setInflectionZoomButton { *this, "Set inflection zoom" };
+	button saveInflectionZoomButton { *this, "Save inflection zoom" };
 
-	//todo: remove this if unnecessary. Disabling or enabling AVX can be a program setting
+	//dontdo: remove this if unnecessary. Disabling or enabling AVX can be a program setting
 	#ifndef NDEBUG
 	button avxtoggle { *this, "Toggle AVX" };
 	#endif
@@ -1548,9 +1699,123 @@ public:
 	uint number_of_threads;
 	FractalParameters defaultParameters;
 
+
+
+	//Utilities to manage child windows
+
+	// This base class makes it possible to store pointers to all child windows in 1 vector, even if the windows are of different types.
+	class child_window_base {
+	public:
+		virtual ~child_window_base() {}
+		virtual void focus() = 0;
+	};
+
+	// The instances of this template are the actual child window classes.
+	template <typename formtype>
+	class child_window : public child_window_base {
+		static_assert(std::is_base_of<form, formtype>::value, "formtype must be a subclass of form");
+	public:
+		formtype fm;
+		void focus() { fm.focus(); }
+	};
+
+	vector<shared_ptr<child_window_base>> childWindows;
+
+	/*
+		creates a childwindow of the specified type
+
+		The reason for PostMessage is this: I want the window to be removed from the vector of childWindows when it's destroyed. Doing so during the handling of the destroyed event causes a deadlock. I don't know why; nana must use some mutex during the event that is required by one of the destructors. The solution is to postpone cleanup of the resources until after the event has been handled, by sending a new message.
+	*/
+	template <typename formtype>
+	void spawn_child()
+	{
+		shared_ptr<child_window<formtype>> child = make_shared<child_window<formtype>>();
+		childWindows.push_back(child);
+
+		child_window_base* childpointer = child.get();
+	
+		child->fm.events().destroy([childpointer]()
+		{
+			if(debug) cout << "child window is being closed" << endl;
+
+			PostMessage(main_form_hwnd, Message::CLEANUP_CHILD_WINDOW, reinterpret_cast<WPARAM>(childpointer), 0);
+
+			if(debug) cout << "child window closed" << endl;
+		});
+
+		//type specific things
+		if constexpr( is_same<formtype, json_form>::value )
+		{
+			json_form& json = child->fm;
+
+			json.capture.events().click([this, &json](const arg_click& arg)
+			{
+				FractalCanvas* canvas = activeCanvas();
+				if (canvas != nullptr) {
+					json.text.caption( canvas->P().toJson() );
+				}
+				else {
+					msgbox mb(json, "Error", msgbox::ok);
+					mb.icon(mb.icon_error);
+					mb << "No fractal tab open";
+					mb.show();
+				}
+			});
+
+			json.apply.events().click([this, &json](const arg_click& arg)
+			{
+				FractalCanvas* canvas = activeCanvas();
+				if (canvas != nullptr) {
+					//try to apply the changes to a copy first
+					FractalParameters P = canvas->P();
+					string textContent = json.text.caption();
+					bool success = P.fromJson(textContent);
+
+					if (success) {
+						canvas->changeParameters(P, EventSource::JSON);
+					}
+					else {
+						msgbox mb(json, "Error", msgbox::ok);
+						mb.icon(mb.icon_error);
+						mb << "Invalid JSON";
+						mb.show();
+					}
+				}
+				else {
+					msgbox mb(json, "Error", msgbox::ok);
+					mb.icon(mb.icon_error);
+					mb << "No fractal tab open";
+					mb.show();
+				}
+			});
+		}
+
+		child->fm.show();
+	}
+
+	// Creates a childwindow of the specified type if none exist yet, otherwise focuses the existing one
+	template <typename formtype>
+	void spawn_unique_child()
+	{
+		for (int i=0; i<childWindows.size(); i++)
+		{
+			child_window<formtype>* child = dynamic_cast<child_window<formtype>*>(childWindows[i].get());
+			if (child != nullptr)
+			{
+				// This type of window already exists. Focus it:	
+				child->focus();
+				return;
+			}
+		}
+
+		//This type of windows does not exist yet. Create one:
+		spawn_child<formtype>();
+	}
+
+
+
 	main_form(FractalParameters& defaultParameters_, uint number_of_threads_)
 	: form( API::make_center(1200, 800) )
-	, pl(get_place())
 	, defaultParameters(defaultParameters_)
 	, tabs(*this, number_of_threads_)
 	, number_of_threads(number_of_threads_)
@@ -1614,6 +1879,10 @@ public:
 					canvas->enqueueBitmapRender(false, false);
 				}
 			});
+			menu_.at(i).append("JSON", [this](menu::item_proxy& ip)
+			{
+				spawn_child<json_form>();
+			});
 			//Files window
 			//Program settings window
 		}
@@ -1627,175 +1896,12 @@ public:
 					canvas->cancelRender();
 				}
 			});
-			/*
-			menu_.at(i).append("JSON", [this](menu::item_proxy& ip)
-			{
-				class JSONform : public form {
-					place& pl;
-					textbox jsontext{ *this };
-					button apply{ *this };
-					button
 
-					JSONform() : form( API::make_center(400, 800) )
-					, pl(get_place())
-					{
-						
-
-						pl.div(R"(
-							vert
-							<json>
-							<buttons>
-						)");
-						pl["x"] << jsontext;
-						pl.collocate();
-					}
-				};
-			});
-			*/
 			menu_.at(i).append("Help", [this](menu::item_proxy& ip)
 			{
-				class helpform : public form {
-				public:
-					place& pl;
-					textbox text{ *this, (
-R"(Inflections / morphings
-
-This program is made to test the effect of Julia morphings / inflections. A click adds an inflection at the clicked location in the fractal. An inflection is a transformation of the complex plane, which corresponds to how shapes in the Mandelbrot set are related to each other. Deeper shapes are Julia transformed versions of lesser deep shapes at the same zoom path.
-
-
-Set inflection zoom
-
-Sets the base zoom level to which the program resets after applying an inflection. Without using this setting, the zoomlevel goes back to 0 after creating an inflection. The zoom level is automatically corrected for the number of inflections, because an inflection halves the distance (the exponent in the magnification factor) to deeper shapes.
-
-
-Coarse and fine
-
-Both control gradient speed. Fine is just finer. The gradient speed controls the number of interpolated colors in the color gradient. Every pixel of the fractal is independently colored based on its iteration count. The color index in the gradient is calculated by (iterationcount of the pixel) mod (number of colors in the gradient).
-
-
-Procedures
-
-Checkers - A checkerboard pattern to test inflections on a tiling pattern, which can also be found in the Mandelbrot set. The circles are a crude simulation of "details" like in the Mandelbrot set.
-
-Pure Julia morphings - starts as a completely empty plane. Add Julia morphings to transform the plane. The iteration count - which determines the color - in this procedure is the number of Julia morphings until the pixel escapes. The procedure iterates over the list of Julia morphings, instead of iterating the same formula all the time (as with the normal Mandelbrot set).
-
-Triple matchmaker - A formula by Pauldelbrot at fractalforums.org. This fractal doesn't have a notion of escaping. The number of iterations is constant for every pixel. Therefore, changing the max iterations changes the result.
-
-
-Keyboard shortcuts
-
-CTRL + Z and CTRL + Y - move back and forward in the history
-CTRL + T - create a new tab
-CTRL + D - duplicate the current tab
-CTRL + W - close the current tab
-CTRL + TAB and CTRL + SHIFT + TAB - go to the next or previous tab
-
-
-Using a default parameter file
-
-Use the program to save a parameter file called default.efp to the directory from where you start the program. The program will use the parameters as default for new tabs.
-
-
-Using commandline parameters
-
-The program also has commandline parameters to render images and Julia morphing animations. Start the program from a commandline like this to get help:
-ExploreFractals.exe --help)"
-					)};
-
-					helpform() : form( API::make_center(400, 800) )
-					, pl(get_place())
-					{
-						text.line_wrapped(true);
-						text.editable(false);
-						text.enable_caret();
-						div("x");
-						pl["x"] << text;
-						pl.collocate();
-					}
-				};
-
-				// Starting the help window in a new thread creates a new instance of nana. Nana somehow (I assume during construction of a form) keeps track of which thread is being used for windows.
-
-				static bool exists = false;
-
-				if (exists) {
-					API::close_window(helpwindow); //todo: can the existing window be focused instead of creating a new one?
-				}
-				
-				thread([&, this]()
-				{
-					lock_guard<mutex> guard(helpwindow_mutex);
-					{
-						assert(exists == false);
-						exists = true;
-
-						helpform fm;
-						fm.caption("Help");
-						helpwindow = (window)fm; //window is a pointer type
-
-						fm.show();
-						exec();
-
-						exists = false;
-						helpwindow = nullptr;
-					}
-				}).detach();
+				spawn_unique_child<help_form>();
 			});
-			//todo: finish JSON window
-			#ifndef NDEBUG
-			menu_.at(i).append("JSON", [this](menu::item_proxy& ip)
-			{
-				class jsonform : public form {
-				public:
-					place& pl;
-					textbox text;
-
-					jsonform(string text_) : form( API::make_center(400, 800) )
-					, pl(get_place())
-					, text(*this, text_)
-					{
-						text.line_wrapped(true);
-						text.enable_caret();
-						text.set_keywords("brackets", false, false, { "{", "}", ":", "[", "]" });
-						text.set_highlight("brackets", colors::blue, colors::white);
-						div("x");
-						pl["x"] << text;
-						pl.collocate();
-					}
-				};
-
-				static bool exists = false;
-
-				FractalCanvas* canvas = activeCanvas();
-				if (canvas != nullptr)
-				{
-					if (exists) {
-						API::close_window(jsonwindow);
-					}
-
-					string text = canvas->P().toJson();
-
-					thread([&, text, this]()
-					{
-						lock_guard<mutex> guard(jsonwindow_mutex);
-						{
-							assert(exists == false);
-							exists = true;
-
-							jsonform fm{ text };
-							fm.caption("JSON");
-							jsonwindow = (window)fm; //window is a pointer type
-
-							fm.show();
-							exec();
-
-							exists = false;
-							helpwindow = nullptr;
-						}
-					}).detach();
-				}
-			});
-			#endif
+			
 			menu_.at(i).append("About", [this](menu::item_proxy& ip)
 			{
 				msgbox mb(*this, "Information", msgbox::ok);
@@ -1817,7 +1923,7 @@ Fractalforums thread: https://fractalforums.org/other/55/explore-fractals-inflec
 		{
 			create_fractal_tab(defaultParameters, defaultParameters.get_procedure().name());
 		});
-		//todo: settings tab kind is unused
+		//dontdo: settings tab kind is unused
 		/*
 		settingsButton.events().click([this]()
 		{
@@ -1891,7 +1997,7 @@ Fractalforums thread: https://fractalforums.org/other/55/explore-fractals-inflec
 			}
 		});
 
-		setInflectionZoomButton.events().click([this]
+		saveInflectionZoomButton.events().click([this]
 		{
 			FractalCanvas* canvas = activeCanvas();
 			if (canvas != nullptr) {
@@ -1927,7 +2033,7 @@ Fractalforums thread: https://fractalforums.org/other/55/explore-fractals-inflec
 		uint toggleJuliaWidth = measure.text_extent_size(toggleJulia.caption()).width;
 		uint leftButtonWidth = measure.text_extent_size(leftButton.caption()).width;
 		uint rightButtonWidth = measure.text_extent_size(rightButton.caption()).width;
-		uint setInflectionZoomButtonWidth = measure.text_extent_size(setInflectionZoomButton.caption()).width;
+		uint saveInflectionZoomButtonWidth = measure.text_extent_size(saveInflectionZoomButton.caption()).width;
 
 		constexpr uint extra = 6;
 		string main_form_layout = R"(
@@ -1943,7 +2049,7 @@ Fractalforums thread: https://fractalforums.org/other/55/explore-fractals-inflec
 					<toggleJulia min=)"+to_string(toggleJuliaWidth + extra)+R"(px>
 					<leftButton min=)"+to_string(leftButtonWidth + extra)+R"(px>
 					<rightButton min=)"+to_string(rightButtonWidth + extra)+R"(px>
-					<setInflectionZoomButton min=)"+to_string(setInflectionZoomButtonWidth + extra)+R"(px>)" +
+					<saveInflectionZoomButton min=)"+to_string(saveInflectionZoomButtonWidth + extra)+R"(px>)" +
 					#ifndef NDEBUG
 						"<avxtoggle>"
 					#else
@@ -1973,7 +2079,7 @@ Fractalforums thread: https://fractalforums.org/other/55/explore-fractals-inflec
 		pl["toggleJulia"] << toggleJulia;
 		pl["leftButton"] << leftButton;
 		pl["rightButton"] << rightButton;
-		pl["setInflectionZoomButton"] << setInflectionZoomButton;
+		pl["saveInflectionZoomButton"] << saveInflectionZoomButton;
 		
 		#ifndef NDEBUG
 		pl["avxtoggle"] << avxtoggle;
@@ -2022,7 +2128,7 @@ Fractalforums thread: https://fractalforums.org/other/55/explore-fractals-inflec
 				if ( ! fractalpanel->showing_sidepanel)	settingsTriangle.caption("▼");
 				else										settingsTriangle.caption("▲");
 
-				caption(fractalPanelTitle(fractalpanel.get()));
+				caption(windowTitle(fractalpanel.get()));
 			}
 			else {
 				caption("ExploreFractals");
@@ -2048,7 +2154,7 @@ Fractalforums thread: https://fractalforums.org/other/55/explore-fractals-inflec
 		}
 	};
 
-	string fractalPanelTitle(FractalPanel* fractalpanel) {
+	string windowTitle(FractalPanel* fractalpanel) {
 		if(fractalpanel->fileAssociation)
 			return string((fractalpanel->fileModified ? "*" : "")) + fractalpanel->filePath + " - ExploreFractals";
 		else
@@ -2076,12 +2182,15 @@ Fractalforums thread: https://fractalforums.org/other/55/explore-fractals-inflec
 
 		fractalpanel->fractal.events().mouse_move([this, fractalpanel = fractalpanel.get()](const arg_mouse& arg)
 		{
-			uint oversampling = fractalpanel->canvas.P().get_oversampling();
-			uint width = fractalpanel->canvas.P().get_width();
-			uint height = fractalpanel->canvas.P().get_height();
+			const uint oversampling = fractalpanel->canvas.P().get_oversampling();
+			const uint width = fractalpanel->canvas.P().width_canvas();
+			const uint height = fractalpanel->canvas.P().height_canvas();
+			const uint bitmap_zoom = fractalpanel->canvas.P().get_bitmap_zoom();
 
-			int xPos = arg.pos.x * oversampling;
-			int yPos = arg.pos.y * oversampling;
+			//location of the cursor in the FractalCanvas
+			int xPos = (arg.pos.x + fractalpanel->offsetX) * oversampling / bitmap_zoom;
+			int yPos = (arg.pos.y + fractalpanel->offsetY) * oversampling / bitmap_zoom;
+
 			if (xPos < 0 || xPos >= width || yPos < 0 || yPos >= height) {
 				return;
 			}
@@ -2106,16 +2215,27 @@ Fractalforums thread: https://fractalforums.org/other/55/explore-fractals-inflec
 	}
 	*/
 
-	FractalCanvas* activeCanvas() {
+	FractalPanel* activeFractalPanel()
+	{
 		if (tabs.bar.length() > 0)
 		{
 			shared_ptr<EFPanelBase> active_panel = tabs.panels[tabs.bar.activated()];
 			if (active_panel->kind() == TabKind::Fractal) {
-				return &(static_pointer_cast<FractalPanel>(active_panel)->canvas);
+				return static_pointer_cast<FractalPanel>(active_panel).get();
 			}
 		}
-		if(debug) cout << "the active canvas was not found" << endl;
+
 		return nullptr;
+	}
+
+	FractalCanvas* activeCanvas()
+	{
+		FractalPanel* active_panel = activeFractalPanel();
+
+		if (active_panel != nullptr)
+			return &(active_panel->canvas);
+		else
+			return nullptr;
 	}
 
 	void associateFile(FractalCanvas* canvas, string path)
@@ -2129,7 +2249,7 @@ Fractalforums thread: https://fractalforums.org/other/55/explore-fractals-inflec
 				FractalPanel* fractalpanel = static_pointer_cast<FractalPanel>(
 					tabs.canvas_panel_map[canvas]
 				).get();
-				caption(fractalPanelTitle(fractalpanel));
+				caption(windowTitle(fractalpanel));
 			}
 		}
 	}
@@ -2171,8 +2291,8 @@ Fractalforums thread: https://fractalforums.org/other/55/explore-fractals-inflec
 
 		uint inflectionCount = P.get_inflectionCount();
 		double zoomLevel = P.get_zoomLevel();
-		uint screenWidth = P.get_screenWidth();
-		uint screenHeight = P.get_screenHeight();
+		uint width_resolution = P.width_resolution();
+		uint height_resolution = P.height_resolution();
 		uint oversampling = P.get_oversampling();
 			
 		int index = tabs.indexOf(canvas);
@@ -2186,7 +2306,7 @@ Fractalforums thread: https://fractalforums.org/other/55/explore-fractals-inflec
 		ssZoomLevel << "2^" << (int64)zoomLevel << " = " << scientific << setprecision(3) << pow(2, zoomLevel);
 			
 		stringstream ssResolution;
-		ssResolution << screenWidth << 'x' << screenHeight << " x " << oversampling << 'x' << oversampling;
+		ssResolution << width_resolution << 'x' << height_resolution << " x " << oversampling << 'x' << oversampling;
 
 		labels.formula = P.get_procedure().name();
 		labels.inflections = ssInflections.str();
@@ -2218,7 +2338,7 @@ Fractalforums thread: https://fractalforums.org/other/55/explore-fractals-inflec
 			tabs.bar.text(index, string("*") + fractalpanel->filename);
 			
 			if (tab_active) {
-				caption(fractalPanelTitle(fractalpanel.get()));
+				caption(windowTitle(fractalpanel.get()));
 			}
 		}
 
@@ -2255,31 +2375,31 @@ Fractalforums thread: https://fractalforums.org/other/55/explore-fractals-inflec
 		) {
 			string historyText = ([=, &P]() -> string
 			{
+				stringstream ss;
 				switch (source_id) {
-					case EventSource::procedure:				return P.get_procedure().name();
-					case EventSource::post_transformation:	return "post " + transformation_name(P.get_post_transformation_type());
-					case EventSource::size:					return (
-						[&P]() {
-							stringstream ss;
-							ss << "size " << P.get_screenWidth() << 'x' << P.get_screenHeight() << " x " << P.get_oversampling() << 'x' << P.get_oversampling();
-							return ss.str();
-						}
-					)();
-					case EventSource::iters:					return "max " + to_string(P.get_maxIters()) + " iters";
-					case EventSource::inflectionZoom:		return "inflection zoom " + to_string(P.get_inflectionZoomLevel());
-					case EventSource::location:				return "location " + to_string(P.get_center());
-					case EventSource::zoomLevel:				return "zoom " + to_string(P.get_zoomLevel());
-					case EventSource::rotation:				return "rotation " + to_string(P.get_rotation_angle());
-					case EventSource::juliaSeed:				return "julia " + to_string(P.get_juliaSeed());
-					case EventSource::julia:					return "julia " + string(P.get_julia() ? "on" : "off");
-					case EventSource::addInflection:			return "add inflection " + to_string(P.get_inflectionCount());
-					case EventSource::removeInflection:		return "remove inflection " + to_string(P.get_inflectionCount() + 1);
-					case EventSource::zoomIn:				return "zoom in " + to_string(P.get_zoomLevel());
-					case EventSource::zoomOut:				return "zoom out " + to_string(P.get_zoomLevel());
-					case EventSource::reset:					return "reset parameters";
-					case EventSource::fractalPanel:			return "Panel parameters set";
+					case EventSource::procedure:						ss << P.get_procedure().name();
+					break; case EventSource::post_transformation:	ss << "post " << transformation_name(P.get_post_transformation_type());
+					break; case EventSource::size: {
+						ss << "size " << P.width_resolution() << 'x' << P.height_resolution()
+							<< " x " << P.get_oversampling() << 'x' << P.get_oversampling();
+					}
+					break; case EventSource::iters:					ss << "max " << P.get_maxIters() << " iters";
+					break; case EventSource::inflectionZoom:			ss << "inflection zoom " << P.get_inflectionZoomLevel();
+					break; case EventSource::location:				ss << "location " << P.get_center();
+					break; case EventSource::zoomLevel:				ss << "zoom " << P.get_zoomLevel();
+					break; case EventSource::rotation:				ss << "rotation " << P.get_rotation_angle();
+					break; case EventSource::juliaSeed:				ss << "julia " << P.get_juliaSeed();
+					break; case EventSource::julia:					ss << "julia " << (P.get_julia() ? "on" : "off");
+					break; case EventSource::addInflection:			ss << "add inflection " << P.get_inflectionCount();
+					break; case EventSource::removeInflection:		ss << "remove inflection " << P.get_inflectionCount() + 1;
+					break; case EventSource::zoomIn:					ss << "zoom in " << P.get_zoomLevel();
+					break; case EventSource::zoomOut:				ss << "zoom out " << P.get_zoomLevel();
+					break; case EventSource::reset:					ss << "reset parameters";
+					break; case EventSource::fractalPanel:			ss << "panel parameters set";
+					break; case EventSource::JSON:					ss << "JSON applied";
+					break; default: ss << "changes";
 				}
-				return "changes";
+				return ss.str();
 			})();
 			fractalpanel->sidebar.history.addItem(P, historyText);
 		}
@@ -2360,8 +2480,8 @@ Fractalforums thread: https://fractalforums.org/other/55/explore-fractals-inflec
 			nana::size viewportSize = active_panel->fractal.size(); //excluding scrollbars
 			int availableX = viewportSize.width + active_panel->vscrollbar.size().width;
 			int availableY = viewportSize.height + active_panel->hscrollbar.size().height;
-			int differenceX = active_panel->canvas.P().get_screenWidth() - availableX;
-			int differenceY = active_panel->canvas.P().get_screenHeight() - availableY;
+			int differenceX = active_panel->canvas.P().get_target_width() - availableX;
+			int differenceY = active_panel->canvas.P().get_target_height() - availableY;
 
 			nana::size windowSize = size();
 			size(nana::size(
@@ -2385,7 +2505,7 @@ Fractalforums thread: https://fractalforums.org/other/55/explore-fractals-inflec
 
 			canvas->changeParameters([=](FractalParameters& P)
 			{
-				P.resize(P.get_oversampling(), availableX, availableY);
+				P.resize(availableX, availableY, P.get_oversampling(), P.get_bitmap_zoom());
 			}, EventSource::size);
 		}
 	}
@@ -2450,7 +2570,7 @@ Fractalforums thread: https://fractalforums.org/other/55/explore-fractals-inflec
 
 					int index = tabs.indexOf(static_pointer_cast<EFPanelBase>(fractalpanel).get());
 					tabs.bar.text(index, fractalpanel->filename);
-					caption(fractalPanelTitle(fractalpanel.get()));
+					caption(windowTitle(fractalpanel.get()));
 				}
 			}
 		}
@@ -2486,7 +2606,7 @@ Fractalforums thread: https://fractalforums.org/other/55/explore-fractals-inflec
 				shared_ptr<FractalPanel> fractalpanel = create_fractal_tab(newP, "");
 
 				tabs.associateFile(path, &fractalpanel->canvas);
-				caption(fractalPanelTitle(fractalpanel.get()));
+				caption(windowTitle(fractalpanel.get()));
 			}
 		}
 	}
@@ -2828,14 +2948,13 @@ int GUI_main(FractalParameters& defaultParameters, uint number_of_threads, Fract
 		if (fm.tabs.containsCanvas(canvas))
 		{
 			canvas->addToThreadcount(1);
-			thread refreshThread([=, &fm]()
+			thread refreshThread([=]()
 			{
 				refreshDuringRender(std::move(render), canvas, renderID);
 				canvas->addToThreadcount(-1);
 			});
 			refreshThread.detach();
 		}
-
 		return false;
 	});
 
@@ -2947,7 +3066,7 @@ int GUI_main(FractalParameters& defaultParameters, uint number_of_threads, Fract
 
 	sc.make_before(Message::CLEANUP_FRACTAL_TAB, [&fm](UINT, WPARAM wParam, LPARAM, LRESULT*)
 	{
-		if(debug) cout << "Message CLEANUP TAB" << endl;
+		if(debug) cout << "Message CLEANUP_FRACTAL_TAB" << endl;
 		FractalCanvas* canvas = reinterpret_cast<FractalCanvas*>(wParam);
 
 		bool canvas_in_map = fm.tabs.canvas_panel_map.find(canvas) != fm.tabs.canvas_panel_map.end();
@@ -2958,10 +3077,39 @@ int GUI_main(FractalParameters& defaultParameters, uint number_of_threads, Fract
 			//just to be sure
 			canvas->end_all_usage();
 
+			cout << "before the cleanup" << endl;
 			//the cleanup
 			fm.tabs.canvas_panel_map.erase(canvas);
+			cout << "after the cleanup" << endl;
 		}
 		return false;
+	});
+
+	sc.make_before(Message::CLEANUP_CHILD_WINDOW, [&fm](UINT, WPARAM wParam, LPARAM, LRESULT*)
+	{
+		if(debug) cout << "Message CLEANUP_CHILD_WINDOW" << endl;
+		main_form::child_window_base* child = reinterpret_cast<main_form::child_window_base*>(wParam);
+
+		int indexof = -1;
+		for (int i=0; i<fm.childWindows.size(); i++) {
+			if (fm.childWindows[i].get() == child) {
+				indexof = i;
+				break;
+			}
+		}
+		
+		// There is a valid situation in which indexof remains -1. This happens when a window is closed BY removing its resource from childWindows (which happens in the destroy event handler below). That also triggers the cleanup, but there is nothing to clean up.
+		if (indexof >= 0)
+			fm.childWindows.erase(fm.childWindows.begin() + indexof);
+
+		return false;
+	});
+
+	fm.events().destroy([&fm]()
+	{
+		if(debug) cout << "main form is being destroyed" << endl;
+		fm.childWindows.clear(); //this closes all child windows
+		if(debug) cout << "all child windows closed" << endl;
 	});
 	
 	//initial tab
@@ -2971,13 +3119,9 @@ int GUI_main(FractalParameters& defaultParameters, uint number_of_threads, Fract
 	fm.fit_to_fractal();
 
 	fm.show();
-	exec();
 
-	//after exec, the main window was closed. Maybe the help window is still open.
-	API::close_window(helpwindow);
-	{
-		lock_guard<mutex> guard(helpwindow_mutex); //wait for the help window nana instance to end
-	}
+	exec();
+	if(debug) cout << "Nana instance has ended." << endl;
 
 	return 0;
 }

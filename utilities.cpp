@@ -54,42 +54,85 @@ string getDate() {
 	return s.str();
 }
 
+class SimpleBitmapManager : public BitmapManager {
+public:
+	ARGB* ptPixels{ nullptr };
+
+	ARGB* realloc(uint width, uint height) {
+		ptPixels = (ARGB*)malloc(width * height * sizeof(ARGB));
+		return ptPixels;
+	}
+
+	~SimpleBitmapManager() {
+		free(ptPixels);
+	}
+};
+
 void saveImage(FractalCanvas* canvas, string filename, bool cleanup = true) {
-	uint screenWidth = canvas->P().get_screenWidth();
-	uint screenHeight = canvas->P().get_screenHeight();
+	uint width_resolution = canvas->P().width_resolution();
+	uint height_resolution = canvas->P().height_resolution();
+	uint bitmap_zoom = canvas->P().get_bitmap_zoom();
 
 	/*
-		This loop performs conversion.
+		These loops performs conversion.
 
 		PNG requires RGBA-values in big-endian order. The colors in this program are ARGB stored in little-endian order. Lodepng interprets the data correctly when delivered as ABGR (the reserve order of RGBA) because of the endianness difference. This comes down to swapping red and blue.
+		 
 		 I convert the colors to ABGR in the original array to reduce memory usage. That means that after saving the PNG, the colors may need to be reverted to their original values.
 	*/
-	for (uint x=0; x<screenWidth; x++) {
-		for (uint y=0; y<screenHeight; y++)
-		{
-			uint pixelIndex = canvas->pixelIndex_of_pixelXY(x, y);
-			ARGB& pixel = canvas->ptPixels[pixelIndex];
-			
-			ARGB r,g,b;
-			r = (pixel & 0x00ff0000);
-			g = (pixel & 0x0000ff00);
-			b = (pixel & 0x000000ff);
+	if (bitmap_zoom > 1)
+	{
+		//I don't want to save the zoomed bitmap. This loop uses the existing array (which is large enough) to create an unzoomed bitmap.
+		for (uint y=0; y< height_resolution; y++) {
+			for (uint x=0; x< width_resolution; x++)
+			{
+				uint pixelIndex = canvas->pixelIndex_of_pixelXY(x, y);
+				const ARGB& pixel = canvas->ptPixels[pixelIndex];
+				
+				ARGB r,g,b;
+				r = (pixel & 0x00ff0000);
+				g = (pixel & 0x0000ff00);
+				b = (pixel & 0x000000ff);
 
-			pixel = (
-				0xff000000 //always use full opacity (no transparency)
-				| r >> 16
-				| g
-				| b << 16
-			);
+				canvas->ptPixels[width_resolution * y + x] = (
+					0xff000000 //always use full opacity (no transparency)
+					| r >> 16
+					| g
+					| b << 16
+				);
+			}
 		}
 	}
+	else
+	{
+		for (uint y=0; y< height_resolution; y++) {
+			for (uint x=0; x< width_resolution; x++)
+			{
+				uint pixelIndex = canvas->pixelIndex_of_pixelXY(x, y);
+				ARGB& pixel = canvas->ptPixels[pixelIndex];
+				
+				ARGB r,g,b;
+				r = (pixel & 0x00ff0000);
+				g = (pixel & 0x0000ff00);
+				b = (pixel & 0x000000ff);
+
+				pixel = (
+					0xff000000 //always use full opacity (no transparency)
+					| r >> 16
+					| g
+					| b << 16
+				);
+			}
+		}
+	}
+
 	
 	uint8* out;
 	size_t outsize;
-	unsigned errorcode = lodepng_encode32(
+	uint errorcode = lodepng_encode32(
 		&out, &outsize				//will contain the PNG data
 		,(uint8*)canvas->ptPixels	//image data to encode
-		,screenWidth, screenHeight	//width and height
+		, width_resolution, height_resolution	//width and height
 	);
 	if (errorcode != 0) {
 		cout << "error " << errorcode << " occurred while encoding PNG" << endl;

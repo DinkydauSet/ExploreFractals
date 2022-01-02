@@ -77,22 +77,64 @@ class FractalParameters {
 		|| modifiedJuliaSeed
 	);}
 
-	readonly(uint, screenWidth)
-	readonly(uint, screenHeight)
+	//
+	// The target is the size as set by the user in the GUI.
+	// Oversampling increases the number of samples (or iterated complex numbers) per color on screen. An oversampling of 2 means that all colors will be the average of the colors of a grid of 2×2 points/complex numbers (4 in total). This is the same as creating a large bitmap first and then shrinking it to the target size.
+	//
+	// Bitmap zoom is the opposite of oversampling. A bitmap zoom of 2 mean that for every 2×2 grid of pixels only 1 point is calculated to determine the color. The effect of this is the same as creating a small bitmap first and then stretching it to the target size.
+	//
+	// The target size is only a target. When bitmap_zoom is 1, the target is always possible, but when bitmap_zoom is larger, the target size must be divisible by bitmap_zoom to achieve the target size. For example, 101×101 with a bitmap_zoom of 2 means that the actual resolution will be 50×50 (rounded down from 50,5×50,5) which, with the bitmap_zoom applied, will result in 100×100 pixels being shown on screen.
+	//
+	readonly(uint, target_width)
+	readonly(uint, target_height)
 	readonly(uint, oversampling)
-	inline uint get_height() const {
-		return screenHeight * oversampling;
+	readonly(uint, bitmap_zoom)
+
+	//resolution is the number of distinct colors visible to the user
+	//I consider the resolution of a zoomed bitmap to be the same as of an unzoomed bitmap. A zoomed bitmap takes up more space on the screen and in memory but it contains no extra details.
+	//The resolution can't be 0, even if the user asks for it. It's an assumption throughout the program.
+	inline uint width_resolution() const {
+		uint res = target_width / bitmap_zoom;
+		if (res == 0)	return 1;
+		else				return res;
 	}
-	inline uint get_width() const {
-		return screenWidth * oversampling;
+	inline uint height_resolution() const {
+		uint res = target_height / bitmap_zoom;
+		if (res == 0)	return 1;
+		else				return res;
 	}
-	readonly(double_c, center) //This is the center in the untransformed complex plane. The coordinate in the center of the viewport can be different because of rotation, inflections etc. Generally this touches on how the program does transformations. The viewport is first identified with a rectangular region in the complex plane, which is then transformed in various ways. This is the center of the starting region. The same goes for the topleftCorner, x_range and y_range.
-	readonly(double_c, topleftCorner)
+
+	//The actual size of the bitmap
+	inline uint width_bitmap() const {
+		return width_resolution() * bitmap_zoom;
+	}
+	inline uint height_bitmap() const {
+		return height_resolution() * bitmap_zoom;
+	}
+	
+	//The number of calculated points
+	inline uint width_canvas() const {
+		return width_resolution() * oversampling;
+	}
+	inline uint height_canvas() const {
+		return height_resolution() * oversampling;
+	}
+
+	readonly(double_c, center) //This is the center in the (untransformed) complex plane. The coordinate in the center of the viewport can be different because of rotation, inflections etc. Generally this touches on how the program does transformations. The viewport is first identified with a rectangular region in the complex plane, which is then transformed in various ways. This is the center of the starting region. The same goes for the topleftCorner, x_range and y_range.
 	readonly(double, x_range)
 	readonly(double, y_range)
-	readonly(double, pixelWidth)
-	readonly(double, pixelHeight)
+	//The spacing is the distance between points in the canvas.
+	//This is stored for efficiency (does this actually help?).
+	//Formula: x_spacing = x_range / width_canvas()
+	readonly(double, x_spacing)
+	readonly(double, y_spacing)
+
+	//Also stored for efficiency
+	//Formula: topleftCorner = center - x_range / 2 + (y_range / 2) * I
+	readonly(double_c, topleftCorner)
+
 	readonly(uint, maxIters)
+
 	readonly(bool, julia)
 	readonly(double_c, juliaSeed);
 	
@@ -108,12 +150,13 @@ class FractalParameters {
 	readonly(double, gradientOffset)
 	readonly(double, gradientSpeedFactor) //stored for efficiency
 	readonly(double, gradientOffsetTerm) //stored for efficiency
-
 	readonly(vector<ARGB>, gradientColors)
 
 	readonly(double, rotation_angle) //angle between 0 and 1. 0 means 0 degrees. 0.25 means 90 degrees etc.
 	readonly(double_c, center_of_rotation)
-	readonly(double_c, rotation_factor) //This is for complex number rotation, which works by multiplying with an element of the unit circle. The number is stored for efficiency because it's used a lot. It can be computed anytime as exp(angle * 2*pi*I).
+	//This is for complex number rotation, which works by multiplying with an element of the unit circle. The number is stored for efficiency.
+	//Formula: exp(rotation_angle * 2*pi*I).
+	readonly(double_c, rotation_factor)
 
 	readonly(double, partialInflectionPower)
 	readonly(double_c, partialInflectionCoord)
@@ -207,8 +250,8 @@ private:
 	*/
 	bool setCenterAndZoomPrivate(double_c newCenter, double zoom) {
 		//Set both of these settings together because the zoom level, topleftCorner coordinate and pixel size are related.
-		uint width = get_width();
-		uint height = get_height();
+		uint width = width_canvas();
+		uint height = height_canvas();
 
 		auto setRenderRange = [&](double zoom) {
 			double x_range_new = 4 / pow(2, zoom);
@@ -228,12 +271,12 @@ private:
 			return recalcRequired;
 		};
 
-		auto updatePixelSize = [&]() {
-			double newPixelWidth = x_range / width;
-			double newPixelHeight = y_range / height;
-			if (newPixelHeight != pixelHeight || newPixelWidth != pixelWidth) {
-				pixelWidth = newPixelWidth;
-				pixelHeight = newPixelHeight;
+		auto update_spacing = [&]() {
+			double new_x_spacing = x_range / width;
+			double new_y_spacing = y_range / height;
+			if (new_x_spacing != x_spacing || new_y_spacing != y_spacing) {
+				x_spacing = new_x_spacing;
+				y_spacing = new_y_spacing;
 				return true;
 			}
 			return false;
@@ -241,10 +284,10 @@ private:
 
 		bool changed = false;
 
-		//setRenderRange should be done first because it changes the x_range and y_range that the following two actions use.
+		//setRenderRange must be done first because it changes the x_range and y_range that the following two actions use.
 		changed |= setRenderRange(zoom);
 		changed |= setCoordinates(newCenter);
-		changed |= updatePixelSize();
+		changed |= update_spacing();
 
 		assert(x_range > 0);
 		assert(y_range > 0);
@@ -329,9 +372,9 @@ public:
 	}
 
 	inline double_c map(uint xPos, uint yPos) const {
-		assert(xPos >= 0); assert(xPos <= get_width());
-		assert(yPos >= 0); assert(yPos <= get_height());
-		return get_topleftCorner() + xPos * get_pixelWidth() - yPos * get_pixelHeight()*I;
+		assert(xPos >= 0); assert(xPos <= width_canvas());
+		assert(yPos >= 0); assert(yPos <= height_canvas());
+		return topleftCorner + xPos * x_spacing - yPos * y_spacing*I;
 	}
 
 	inline double_c rotation(double_c c) const {
@@ -420,13 +463,20 @@ private:
 	}
 
 public:
-	bool resize(uint newOversampling, uint newScreenWidth, uint newScreenHeight)
+	bool resize(uint target_width, uint target_height, uint oversampling, uint bitmap_zoom)
 	{
 		bool changed = false;
-		if (oversampling != newOversampling || screenWidth != newScreenWidth || screenHeight != newScreenHeight) {
-			oversampling = newOversampling;
-			screenWidth = newScreenWidth;
-			screenHeight = newScreenHeight;
+		if (
+			this->oversampling != oversampling
+			|| this->bitmap_zoom != bitmap_zoom
+			|| this->target_height != target_height
+			|| this->target_width != target_width
+		) {
+			this->oversampling = oversampling;
+			this->bitmap_zoom = bitmap_zoom;
+			this->target_height = target_height;
+			this->target_width = target_width;
+
 			updateCenterAndZoom(); //this causes recalculation of the pixel width and some other things
 			changed = true;
 		}
@@ -448,7 +498,7 @@ public:
 	{
 		if (isfinite(seed) == false) { //seed is NaN
 			cout << "Attempt to set a NaN julia seed" << endl;
-			return; //todo: maybe show an error message when this happens
+			return; //dontdo: maybe show an error message when this happens
 		}
 
 		if (juliaSeed != seed) {
@@ -528,7 +578,7 @@ public:
 	}
 
 	void addInflection(uint xPos, uint yPos) {
-		assert( ! (xPos < 0 || xPos > get_width() || yPos < 0 || yPos > get_height()) );
+		assert( ! (xPos < 0 || xPos > width_canvas() || yPos < 0 || yPos > height_canvas()) );
 		double_c thisInflectionCoord = pre_transformation(rotation(map(xPos, yPos)));
 		addInflection(thisInflectionCoord);
 		modifiedCalculations = true;
@@ -608,16 +658,17 @@ public:
 		modifiedSize = true;
 		modifiedColors = true;
 
+		target_width = 1200;
+		target_height = 800;
 		oversampling = 1;
-		screenWidth = 1200;
-		screenHeight = 800;
+		bitmap_zoom = 1;
 		rotation_angle = 0;
 		rotation_factor = 1;
 		procedure = M2;
 		procedure_identifier = M2.id;
 		julia = false;
 		juliaSeed = -0.75 + 0.1*I;
-		//inflectionCoords.resize(250); //initial capacity
+		//inflectionCoords.resize(250); //already done in the constructor
 		inflectionCount = 0;
 		inflectionZoomLevel = 0;
 		
@@ -641,7 +692,7 @@ public:
 	}
 
 	void fromParameters(const FractalParameters& P) {
-		resize(P.get_oversampling(), P.get_screenWidth(), P.get_screenHeight());
+		resize(P.get_target_width(), P.get_target_height(), P.get_oversampling(), P.get_bitmap_zoom());
 		setRotation(P.get_rotation_angle());
 		setProcedure(P.get_procedure_identifier());
 		setJulia(P.get_julia());
@@ -670,8 +721,9 @@ public:
 		//Add data:
 		document.AddMember("programVersion", PROGRAM_VERSION, a);
 		document.AddMember("oversampling", oversampling, a);
-		document.AddMember("screenWidth", screenWidth, a);
-		document.AddMember("screenHeight", screenHeight, a);
+		document.AddMember("bitmap_zoom", bitmap_zoom, a);
+		document.AddMember("target_width", target_width, a);
+		document.AddMember("target_height", target_height, a);
 
 		document.AddMember("rotation_angle", rotation_angle, a);
 
@@ -753,25 +805,35 @@ public:
 			if (document.HasMember("programVersion"))
 				programVersion_r = document["programVersion"].GetDouble();
 
-			uint oversampling_r = get_oversampling();
+			uint oversampling_r = oversampling;
 			if (document.HasMember("oversampling"))
 				oversampling_r = document["oversampling"].GetInt();
 
-			uint screenWidth_r = get_screenWidth();
-			uint screenHeight_r = get_screenHeight();
-			if (programVersion_r >= 6.0) {
+			uint bitmap_zoom_r = bitmap_zoom;
+			if (document.HasMember("bitmap_zoom"))
+				bitmap_zoom_r = document["bitmap_zoom"].GetInt();
+
+			uint target_width_r = target_width;
+			uint target_height_r = target_height;
+			if (programVersion_r >= 10.0) {
+				if (document.HasMember("target_width"))
+					target_width_r = document["target_width"].GetInt();
+				if (document.HasMember("target_height"))
+					target_height_r = document["target_height"].GetInt();
+			}
+			else if (programVersion_r >= 6.0) {
 				if (document.HasMember("screenWidth"))
-					screenWidth_r = document["screenWidth"].GetInt();
+					target_width_r = document["screenWidth"].GetInt();
 				if (document.HasMember("screenHeight"))
-					screenHeight_r = document["screenHeight"].GetInt();
+					target_height_r = document["screenHeight"].GetInt();
 			}
 			else {
 				if (document.HasMember("width"))
-					screenWidth_r = document["width"].GetInt();
+					target_width_r = document["width"].GetInt();
 				if (document.HasMember("height"))
-					screenHeight_r = document["height"].GetInt();
+					target_height_r = document["height"].GetInt();
 			}
-			if(debug) cout << "fromJson width height oversampling: " << screenWidth_r << " " << screenHeight_r << " " << oversampling_r << " " << endl;
+			if(debug) cout << "fromJson width height oversampling: " << target_width_r << " " << target_height_r << " " << oversampling_r << " " << endl;
 			
 
 			double_c center_r = get_center();
@@ -794,10 +856,14 @@ public:
 				julia_r = document["julia"].GetBool();
 
 			int procedure_identifier_r = procedure.id;
-			if (document.HasMember("procedure_identifier"))
-				procedure_identifier_r = document["procedure_identifier"].GetInt();
-			else if (document.HasMember("formula_identifier")) //versions below 8
-				procedure_identifier_r = document["formula_identifier"].GetInt();			
+			if (programVersion_r >= 9.0) {
+				if (document.HasMember("procedure_identifier"))
+					procedure_identifier_r = document["procedure_identifier"].GetInt();
+			}
+			else {
+				if (document.HasMember("formula_identifier"))
+					procedure_identifier_r = document["formula_identifier"].GetInt();			
+			}
 
 			int post_transformation_type_r = post_transformation_type;
 			int pre_transformation_type_r = pre_transformation_type;
@@ -840,7 +906,7 @@ public:
 				rotation_angle_r = 0;
 			}
 			
-			resize(oversampling_r, screenWidth_r, screenHeight_r);
+			resize(target_width_r, target_height_r, oversampling_r, bitmap_zoom_r);
 			setCenterAndZoomAbsolute(center_r, zoom_r);
 			setMaxIters(maxIters_r);
 			setJuliaSeed(juliaSeed_r);
@@ -853,7 +919,7 @@ public:
 			setGradientSpeed(gradientSpeed_r);
 			setGradientOffset(gradientOffset_r);
 			setInflectionZoomLevel(inflectionZoomlevel_r);
-			center_of_rotation = center; //TODO: assignment instead of using a function, doesn't update modified~ bools
+			center_of_rotation = center; //dontdo: assignment instead of using a function, doesn't update modified~ bools
 			setRotation(rotation_angle_r);
 			
 			if (document.HasMember("inflectionCoords")) {

@@ -73,20 +73,21 @@ void FractalCanvas::createNewRenderTemplated(uint renderID)
 	auto render = make_shared<Render<procedure_identifier, use_avx, julia>>(*this, renderID);
 	auto& R = *render.get();
 
-	uint width = mP.get_width();
-	uint height = mP.get_height();
+	uint width = mP.width_canvas();
+	uint height = mP.height_canvas();
 	{
 		//Printing information before the render
 		double_c center = mP.get_center();
 		double_c juliaSeed = mP.get_juliaSeed();
 		cout << "-----New Render-----" << endl;
 		cout << "renderID: " << renderID << endl;
+		cout << "FractalCanvas: " << voidPtr() << endl;
 		cout << "Procedure: " << mP.get_procedure().name() << (julia ? " julia" : "") << (use_avx ? " (avx)" : "") << endl;
 		cout << "width: " << width << endl;
 		cout << "height: " << height << endl;
 		cout << "center: " << real(center) << " + " << imag(center) << " * I" << endl;
-		cout << "xrange: " << mP.get_x_range() << endl;
-		cout << "yrange: " << mP.get_y_range() << endl;
+		cout << "x_range: " << mP.get_x_range() << endl;
+		cout << "y_range: " << mP.get_y_range() << endl;
 		cout << "zoom: " << mP.get_zoomLevel() << endl;
 		cout << "Julia: ";
 		if (mP.get_julia()) cout << "Yes, with seed " << real(juliaSeed) << " + " << imag(juliaSeed) << " * I" << endl;
@@ -114,22 +115,6 @@ void FractalCanvas::createNewRenderTemplated(uint renderID)
 		cout << "pixelGroupings: " << R.pixelGroupings << endl;
 	}
 }
-
-
-
-class SimpleBitmapManager : public BitmapManager {
-public:
-	ARGB* ptPixels{ nullptr };
-
-	ARGB* realloc(uint newScreenWidth, uint newScreenHeight) {
-		ptPixels = (ARGB*)malloc(newScreenHeight * newScreenWidth * sizeof(ARGB));
-		return ptPixels;
-	}
-
-	~SimpleBitmapManager() {
-		free(ptPixels);
-	}
-};
 
 
 
@@ -266,49 +251,20 @@ int skipframes = 0;
 bool save_as_efp = false;
 
 
-//utf16 to utf8 converter from https://stackoverflow.com/a/35103224/10336025
-#if _MSC_VER >= 1900
-std::string utf16_to_utf8(std::u16string utf16_string)
-{
-    std::wstring_convert<std::codecvt_utf8_utf16<int16_t>, int16_t> convert;
-    auto p = reinterpret_cast<const int16_t *>(utf16_string.data());
-    return convert.to_bytes(p, p + utf16_string.size());
-}
-#else
-std::string utf16_to_utf8(std::u16string utf16_string)
-{
-    std::wstring_convert<std::codecvt_utf8_utf16<char16_t>, char16_t> convert;
-    return convert.to_bytes(utf16_string);
-}
-#endif
-
 [[gnu::target("avx")]]
 uint64 getFeatureMask() {
 	return _xgetbv(0);
 }
 
-int CALLBACK WinMain(
-	_In_ HINSTANCE hInstance,
-	_In_ HINSTANCE hPrevInstance,
-	_In_ LPSTR	 lpCmdLine,
-	_In_ int	   nCmdShow
-)
+int main(int argc, char *argv[])
 {
-	//Hide the CMD window that windows always opens along with a console application. The fact that this has to be done is because of a restriction in windows.
-	ShowWindow( GetConsoleWindow(), SW_HIDE );
-
 	setvbuf(stdout, NULL, _IOLBF, 1024);
 	cout << setprecision(21);	//precision when printing doubles
-
 	if(debug) cout << "debug version" << endl;
-	//difficulty because windows uses UTF16
-	int argc;
-	char16_t** argv = (char16_t**)CommandLineToArgvW(GetCommandLineW(), &argc);
+
 	vector<string> commands(argc);
 	for (int i=0; i<argc; i++) {
-		u16string u16 = u16string(argv[i]);
-		string normal = utf16_to_utf8(u16);
-		commands[i] = normal;
+		commands[i] = string(argv[i]);
 	}
 	
 	bool override_interactive = false;
@@ -391,13 +347,13 @@ int CALLBACK WinMain(
 			cout << (R"(
 all available parameters:
     -p name.efp     use the file name.efp as initial parameters. default: default.efp
-	-o directory    use the directory as output directory (example: C:\folder)
+    -o directory    use the directory as output directory (example: C:\folder)
     --width         override the width parameter
     --height        override the height parameter
     --oversampling  override the oversampling parameter
     --image         render the initial parameter file to an image
     --animation     render an animation of the initial parameters
-	--efp           save the parameters instead of rendering to an image (can be used to convert old parameter files or to store parameter files for every frame in an animation)
+    --efp           save the parameters instead of rendering to an image (can be used to convert old parameter files or to store parameter files for every frame in an animation)
     --fps number    the number of frames per second (integer)
     --spi number    the number of seconds per inflection (floating point)
     --spz number    the number of seconds per zoom (floating point)
@@ -407,7 +363,7 @@ all available parameters:
 
 examples:
     ExploreFractals -p file.efp --animation --fps 60 --spi 3 --spz 0.6666 -o C:\folder -i
-	ExploreFractals -p name.efp --width 1920 --height 1080 --oversampling 2
+    ExploreFractals -p name.efp --width 1920 --height 1080 --oversampling 2
 )"			) << endl;
 			return 0;
 		}
@@ -449,9 +405,10 @@ examples:
 		int& o = override_oversampling, w = override_width, h = override_height;
 		if (o != -1 || w != -1 || h != -1)
 			defaultParameters.resize(
-				(o != -1 ? o : defaultParameters.get_oversampling())
-				,(w != -1 ? w : defaultParameters.get_screenWidth())
-				,(h != -1 ? h : defaultParameters.get_screenHeight())
+				(w != -1 ? w : defaultParameters.get_target_width())
+				,(h != -1 ? h : defaultParameters.get_target_height())
+				,(o != -1 ? o : defaultParameters.get_oversampling())
+				,defaultParameters.get_bitmap_zoom()
 			);
 	}
 
@@ -488,6 +445,9 @@ examples:
 	if (!interactive) {
 		return 0;
 	}
-
+	// This closes the automatically openened console window. This program needs to be a commandline program because it has commandline parameters that can be used and it gives text output. Windows opens a console window for every console program and I don't want that window. Unfortunately a windows program can't be both a commandline and a GUI program. Previously I used this to close the window:
+	//ShowWindow(GetConsoleWindow(), SW_HIDE);
+	// but that also closes the window when the program is started from CMD or powershell with a command, which is really annoying. FreeConsole causes the automatically opened window to close, but not powershell or CMD. After FreeConsole, powershell and CMD show no text output anymore.
+	FreeConsole();
 	return GUI::GUI_main(defaultParameters, NUMBER_OF_THREADS, initialParameters);
 }

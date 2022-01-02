@@ -28,8 +28,6 @@
 #include "common.cpp"
 #include "FractalParameters.cpp"
 
-using namespace std;
-
 constexpr uint64 MAXIMUM_BITMAP_SIZE = 2147483648; // 2^31
 
 /*
@@ -84,12 +82,12 @@ private:
 public:
 	inline const FractalParameters& P() { return mP; } //read access to P
 	inline FractalParameters& Pmutable() { return mP; } //read-write access to P
-	
+
 	mutex genericMutex; //mutex for various race condition tasks such as updating the uints below; should not be held for a long time
 	mutex activeRender; //only one render can be executing at any one time
 	mutex activeBitmapRender;
 	//The mutexes are used to guarantee correctness of these 5 values:
-	//todo: inconsistent use of int and uint for renderIDs
+	//dontdo: inconsistent use of int and uint for renderIDs
 	int lastRenderID{ 0 };
 	int activeRenders{ 0 };
 	int renderQueueSize{ 0 };
@@ -113,7 +111,9 @@ public:
 		while (true) {
 			cancelRender();
 			lock_guard<mutex> guard(activeRender);
+
 			if(debug) cout << "waiting for renders to stop: activeRenders: " << activeRenders << ", queue size: " << renderQueueSize << endl;
+
 			if (renderQueueSize == 0)
 				break;
 		}
@@ -121,7 +121,9 @@ public:
 		while (true) {
 			cancelBitmapRender();
 			lock_guard<mutex> guard(activeBitmapRender);
+
 			if(debug) cout << "waiting for bitmap renders to stop: activeBitmapRenders: " << activeBitmapRenders << ", queue size: " << bitmapRenderQueueSize << ", other active threads: " << otherActiveThreads << endl;
+
 			if (bitmapRenderQueueSize == 0 && otherActiveThreads == 0)
 				break;
 		}
@@ -139,9 +141,9 @@ public:
 		/*
 			This sets the width and height to 1 and allocates memory for that size. This is to ensure that the FractalCanvas' state is consistent. Currently it's not consistent because no memory has been allocated, which corresponds to a width and height of 0, which is an invalid value for many of the functions.
 		*/
-		resize(1,1,1);
+		resize(1,1,1,1);
 		mP.clearModified();
-		if(debug) cout << "canvas constructed with dimensions " << mP.get_width() << "x" << mP.get_height() << endl;
+		if(debug) cout << "canvas constructed with dimensions " << mP.width_canvas() << "x" << mP.height_canvas() << endl;
 	}
 
 	//constructor with initial parameters
@@ -149,7 +151,7 @@ public:
 	: FractalCanvas(number_of_threads, bitmapManager, GUIs)
 	{
 		changeParameters(parameters);
-		if(debug) cout << "canvas parameters changed with dimensions " << mP.get_width() << "x" << mP.get_height() << endl;
+		if(debug) cout << "canvas parameters changed with dimensions " << mP.width_canvas() << "x" << mP.height_canvas() << endl;
 	}
 
 	~FractalCanvas() {
@@ -227,25 +229,27 @@ public:
 		ARGB nextColor = gradientColors[(asInt + 1) % number_of_colors];
 		double ratio = gradientPosition - asInt;
 
-
 		return rgbColorAverage(previousColor, nextColor, ratio);
 	}
 
-	ResizeResult resize(uint newOversampling, uint newScreenWidth, uint newScreenHeight) {
-		uint oldScreenWidth = mP.get_screenWidth();
-		uint oldScreenHeight = mP.get_screenHeight();
+	ResizeResult resize(uint newOversampling, uint new_target_width, uint new_target_height, uint newBitmapZoom) {
+		uint old_target_width = mP.get_target_width();
+		uint old_target_height = mP.get_target_height();
 		uint oldOversampling = mP.get_oversampling();
-		return resize(newOversampling, newScreenWidth, newScreenHeight, oldOversampling, oldScreenWidth, oldScreenHeight);
+		uint oldBitmapZoom = mP.get_bitmap_zoom();
+		return resize(
+			newOversampling, new_target_width, new_target_height, newBitmapZoom
+			,oldOversampling, old_target_width, old_target_height, oldBitmapZoom
+		);
 	}
 	
-	ResizeResult resize(uint newOversampling, uint newScreenWidth, uint newScreenHeight
-					 ,uint64 oldOversampling, uint64 oldScreenWidth, uint64 oldScreenHeight)
-	{
+	ResizeResult resize(
+		uint newOversampling, uint new_target_width, uint new_target_height, uint newBitmapZoom
+		,uint oldOversampling, uint old_target_width, uint old_target_height, uint oldBitmapZoom
+	) {
 		assert(newOversampling > 0);
-		assert(newScreenWidth > 0);
-		assert(newScreenHeight > 0);
-
-		sizeof(ResizeResult);
+		assert(new_target_width > 0);
+		assert(new_target_height > 0);
 
 		auto fractalcanvas_realloc = [&](uint64 size) {
 			cout << "reallocating fractalcanvas to size: " << size << endl;
@@ -260,15 +264,26 @@ public:
 			cout << "reallocated bitmap" << endl;
 		};
 
-		uint64 oldWidth = oldScreenWidth * oldOversampling;
-		uint64 oldHeight = oldScreenHeight * oldOversampling;
-		uint64 newWidth = newScreenWidth * newOversampling;
-		uint64 newHeight = newScreenHeight * newOversampling;
-		uint64 bitmap_size = newScreenWidth * newScreenHeight;
-		uint64 fractalcanvas_size = newWidth * newHeight;
-		uint64 old_fractalcanvas_size = oldWidth * oldHeight;
+		//I create FractalParameters objects to be able to use the functions that calculate the resolution, canvas size etc. (not a great solution but it works)
+		FractalParameters old, new_;
+		old.resize(old_target_width, old_target_height, oldOversampling, oldBitmapZoom);
+		new_.resize(new_target_width, new_target_height, newOversampling, newBitmapZoom);
 
-		bool realloc_bitmap = newScreenWidth != oldScreenWidth || newScreenHeight != oldScreenHeight;
+		uint64 old_width_canvas = old.width_canvas();
+		uint64 old_height_canvas = old.height_canvas();
+		uint64 old_width_bitmap = old.width_bitmap();
+		uint64 old_height_bitmap = old.height_bitmap();
+		uint64 new_width_canvas = new_.width_canvas();
+		uint64 new_height_canvas = new_.height_canvas();
+		uint64 new_width_bitmap = new_.width_bitmap();
+		uint64 new_height_bitmap = new_.height_bitmap();
+
+		uint64 bitmap_size = new_width_bitmap * new_height_bitmap;
+		uint64 old_bitmap_size = old_width_bitmap * old_height_bitmap;
+		uint64 fractalcanvas_size = new_width_canvas * new_height_canvas; //this really needs the 64-bit accuracy
+		uint64 old_fractalcanvas_size = old_width_canvas * old_height_canvas;
+
+		bool realloc_bitmap = old_bitmap_size != bitmap_size;
 		bool realloc_fractalcanvas = old_fractalcanvas_size != fractalcanvas_size;
 
 		if (!realloc_bitmap && !realloc_fractalcanvas) {
@@ -276,13 +291,13 @@ public:
 			return {true, false, ResizeResultType::Success};
 		}
 		else {
-			if ( false == (
-				newWidth > 0
-				&& newHeight > 0
-				&& bitmap_size <= MAXIMUM_BITMAP_SIZE
-			)) {
+			if (
+				new_width_canvas == 0
+				|| new_height_canvas == 0
+				|| bitmap_size > MAXIMUM_BITMAP_SIZE
+			) {
 				cout << "Size outside of allowed range." << endl;
-				cout << "width: " << newWidth << "  " << "height: " << newHeight << endl;
+				cout << "width: " << new_width_canvas << "  " << "height: " << new_height_canvas << endl;
 				cout << "maximum allowed size: " << MAXIMUM_BITMAP_SIZE << endl;
 				return {false, false, ResizeResultType::OutOfRangeError};
 			}
@@ -300,13 +315,13 @@ public:
 			cancelBitmapRender();
 			lock_guard<mutex> guard2(activeBitmapRender);
 
-			mP.resize(newOversampling, newScreenWidth, newScreenHeight);
+			mP.resize(new_target_width, new_target_height, newOversampling, newBitmapZoom);
 
 			if (realloc_fractalcanvas) {
 				fractalcanvas_realloc(fractalcanvas_size);
 			}
 			if (realloc_bitmap) {
-				bitmap_realloc(newScreenWidth, newScreenHeight);
+				bitmap_realloc(new_width_bitmap, new_height_bitmap);
 			}
 
 			if (iters == nullptr || ptPixels == nullptr) {
@@ -315,13 +330,13 @@ public:
 				success = false;
 
 				// Try to get back the old size
-				mP.resize(oldOversampling, oldScreenWidth, oldScreenHeight);
+				mP.resize(old_target_width, old_target_height, oldOversampling, oldBitmapZoom);
 
 				if (realloc_fractalcanvas) {
-					fractalcanvas_realloc(oldWidth * oldHeight);
+					fractalcanvas_realloc(old_width_canvas * old_height_canvas);
 				}
 				if (realloc_bitmap) {
-					bitmap_realloc(oldScreenWidth, oldScreenHeight);
+					bitmap_realloc(old_width_bitmap, old_height_bitmap);
 				}
 
 				if (iters != nullptr && ptPixels != nullptr) {
@@ -330,7 +345,7 @@ public:
 				}
 				else {
 					//As a last resort, change the image size to 1x1. This can't fail in any reasonable situation.
-					mP.resize(1,1,1);
+					mP.resize(1,1,1,1);
 					fractalcanvas_realloc(1);
 					bitmap_realloc(1,1);
 					changed = true;
@@ -340,6 +355,21 @@ public:
 		}
 		return {success, changed, res};
 	}
+
+	void postResizeActions(ResizeResult res, int source_id)
+	{
+		//If memory is changed, that also changes the calculations.
+		assert( ! (mP.modifiedMemory && ! mP.modifiedCalculations) );
+
+		//If the size is changed, that also changes the memory.
+		assert( ! (mP.modifiedSize && ! mP.modifiedMemory) );
+
+		if (res.success == false)
+			canvasResizeFailedEvent(res);
+		if (res.changed)
+			sizeChangedEvent();
+		parametersChangedEvent(source_id);
+	};
 
 	private: FractalParameters temp;
 public:
@@ -355,35 +385,13 @@ public:
 	{
 		ResizeResult res = {true, false, ResizeResultType::Success};
 
-		uint old_screenWidth = mP.get_screenWidth();
-		uint old_screenHeight = mP.get_screenHeight();
+		uint old_target_width = mP.get_target_width();
+		uint old_target_height = mP.get_target_height();
 		uint old_oversampling = mP.get_oversampling();
+		uint old_bitmap_zoom = mP.get_bitmap_zoom();
 
 		check_modified_memory = check_modified_memory || mP.modifiedMemory; //If the parameters were already changed, overrule
 		if(debug) cout << "modified status: " << mP.modifiedSize << mP.modifiedMemory << mP.modifiedCalculations << mP.modifiedColors << endl;
-
-		auto postActions = [this, source_id](ResizeResult res)
-		{	
-			//If there is a modification in size, that has resulted in a changed size of the FractalCanvas, unless the resize failed because of not enough memory for example.
-			assert(
-				mP.modifiedSize == false
-				|| (
-					res.changed || res.success == false
-				)
-			);
-
-			//If memory is changed, that also changes the calculations.
-			assert( ! (mP.modifiedMemory && ! mP.modifiedCalculations) );
-
-			//If the size is changed, that also changes the memory.
-			assert( ! (mP.modifiedSize && ! mP.modifiedMemory) );
-
-			if (res.success == false)
-				canvasResizeFailedEvent(res);
-			if (res.changed)
-				sizeChangedEvent();
-			parametersChangedEvent(source_id);
-		};
 
 		//
 		// If check_modified_memory, the action is first applied to a copy of the parameters, to see if the changes require allocating new memory. In that case, the parameters should not be changed during a render. The generality of accepting a function makes programming the GUI a lot easier, but it requires this kind of check.
@@ -401,7 +409,7 @@ public:
 		if ( ! check_modified_memory || ! temp.modifiedMemory) {
 			if(debug) cout << "changeParameters at location 1" << endl;
 			action(mP);
-			postActions(res);
+			postResizeActions(res, source_id);
 		}
 		else {
 			if (temp.modifiedSize) {
@@ -414,8 +422,11 @@ public:
 
 					action(mP);
 				}
-				res = resize(mP.get_oversampling(), mP.get_screenWidth(), mP.get_screenHeight(), old_oversampling, old_screenWidth, old_screenHeight);
-				postActions(res);
+				res = resize(
+					mP.get_oversampling(), mP.get_target_width(), mP.get_target_height(), mP.get_bitmap_zoom()
+					,old_oversampling, old_target_width, old_target_height, old_bitmap_zoom
+				);
+				postResizeActions(res, source_id);
 			}
 			else
 			{
@@ -440,7 +451,7 @@ public:
 
 				if (done) {
 					if(debug) cout << "changeParameters at location 4" << endl;
-					postActions(res);
+					postResizeActions(res, source_id);
 				}
 				else
 				{
@@ -458,7 +469,7 @@ public:
 
 							action(mP);
 						}
-						postActions(res);
+						postResizeActions(res, source_id);
 						addToThreadcount(-1);
 					}, res).detach();
 				}
@@ -466,13 +477,6 @@ public:
 		}
 
 		return res;
-	}
-
-	void addToThreadcount(int amount) {
-		lock_guard<mutex> guard(genericMutex);
-		assert((int64)otherActiveThreads + amount >= 0); //there should not be less than 0 threads
-		otherActiveThreads += amount;
-		if(debug) cout << "FractalCanvas other active threads count changed to " << otherActiveThreads << endl;
 	}
 
 	ResizeResult changeParameters(const FractalParameters& newP, int source_id = 0)
@@ -483,36 +487,48 @@ public:
 		}, source_id);
 	}
 
+
+	void addToThreadcount(int amount) {
+		lock_guard<mutex> guard(genericMutex);
+		assert((int64)otherActiveThreads + amount >= 0); //there should not be less than 0 threads
+		otherActiveThreads += amount;
+		if(debug) cout << "FractalCanvas other active threads count changed to " << otherActiveThreads << endl;
+	}
+
+
 	//	returns the index in ptPixels of (x, y) in the bitmap
-	inline uint pixelIndex_of_pixelXY(uint x, uint y) {
-		
-		assert(x >= 0); assert(x < mP.get_screenWidth());
-		assert(y >= 0); assert(y < mP.get_screenHeight());
-		return mP.get_screenWidth()*y + x;
+	// When bitmap_zoom > 1 this returns the index of the topleft corner pixel of the block of pixels belonging to this coordinate.
+	// You can think of it like this: there is a conceptual bitmap that could be in memory, but is not for performance, that has the actual size of the fractalCanvas (screenWidth * screenHeight). This function accepts coordinates in that bitmap, and gives an/the index of those coordinates in the real bitmap, which is larger if bitmap_zoom > 1.
+	inline uint pixelIndex_of_pixelXY(uint x, uint y)
+	{
+		assert(x >= 0); assert(x < mP.width_resolution());
+		assert(y >= 0); assert(y < mP.height_resolution());
+		const uint& bitmap_zoom = mP.get_bitmap_zoom();
+		return (mP.width_resolution() * bitmap_zoom * y * bitmap_zoom) + (x * bitmap_zoom);
 	}
 
 	//unused?
-	inline uint pixelIndex_of_itersXY(uint x, uint y) {
+	inline uint pixelIndex_of_itersXY(uint x, uint y)
+	{
 		//returns the corresponding index in ptPixels of (x, y) in the fractal canvas
-		assert(x >= 0); assert(x < mP.get_width());
-		assert(y >= 0); assert(y < mP.get_height());
-		int oversampling = mP.get_oversampling();
+		assert(x >= 0); assert(x < mP.width_canvas());
+		assert(y >= 0); assert(y < mP.height_canvas());
+		uint oversampling = mP.get_oversampling();
 		return pixelIndex_of_pixelXY(x / oversampling, y / oversampling);
 	}
 
 	inline uint itersIndex_of_itersXY(uint x, uint y) {
-		assert(x >= 0); assert(x < mP.get_width());
-		assert(y >= 0); assert(y < mP.get_height());
+		assert(x >= 0); assert(x < mP.width_canvas());
+		assert(y >= 0); assert(y < mP.height_canvas());
 		//returns the index in iters of (x, y) in the fractalcanvas
-		uint screenWidth = mP.get_screenWidth();
-		uint screenHeight = mP.get_screenHeight();
+		uint height_resolution = mP.height_resolution();
 		uint oversampling = mP.get_oversampling();
 		uint samples = oversampling * oversampling;
 		uint dx = x % oversampling;
 		uint dy = y % oversampling;
 		uint _x = x / oversampling;
 		uint _y = y / oversampling;
-		return (_x * screenHeight + _y) * samples + (dy * oversampling) + dx;
+		return (_x * height_resolution + _y) * samples + (dy * oversampling) + dx;
 	}
 
 	inline uint getIterationcount(uint x, uint y) {
@@ -530,7 +546,7 @@ public:
 	inline void setPixel(uint i, uint j, uint iterationCount, bool guessed, bool isInMinibrot)
 	{
 		assert(i >= 0 && j >= 0);
-		assert(i < mP.get_width() && j < mP.get_height());
+		assert(i < mP.width_canvas() && j < mP.height_canvas());
 
 		IterData result(iterationCount, guessed, isInMinibrot);
 		uint index = itersIndex_of_itersXY(i, j);
@@ -538,21 +554,23 @@ public:
 	}
 	
 	void renderBitmapRect(bool highlight_guessed, uint xfrom, uint xto, uint yfrom, uint yto, uint bitmapRenderID) {
-		uint screenWidth = mP.get_screenWidth();
-		uint screenHeight = mP.get_screenHeight();
-		uint oversampling = mP.get_oversampling();
+		const uint width_resolution = mP.width_resolution();
+		const uint height_resolution = mP.height_resolution();
+		const uint oversampling = mP.get_oversampling();
+		const uint bitmap_zoom = mP.get_bitmap_zoom();
+
 		uint samples = oversampling * oversampling;
 
-		assert(xfrom >= 0); assert(xfrom <= screenWidth);
-		assert(xto >= xfrom); assert(xto <= screenWidth);
-		assert(yfrom >= 0); assert(yfrom <= screenHeight);
-		assert(yto >= yfrom); assert(yto <= screenHeight);
+		assert(xfrom >= 0); assert(xfrom <= width_resolution);
+		assert(xto >= xfrom); assert(xto <= width_resolution);
+		assert(yfrom >= 0); assert(yfrom <= height_resolution);
+		assert(yto >= yfrom); assert(yto <= height_resolution);
 
 		if (highlight_guessed) {
 			for (uint px=xfrom; px<xto; px++) {
 				for (uint py=yfrom; py<yto; py++) {
 
-					uint itersStartIndex = (px * screenHeight + py) * samples;
+					uint itersStartIndex = (px * height_resolution + py) * samples;
 
 					uint sumR=0, sumG=0, sumB=0;
 					ARGB color;
@@ -567,12 +585,19 @@ public:
 						sumG += getGValue(color);
 						sumB += getBValue(color);
 					}
-				
-					ptPixels[pixelIndex_of_pixelXY(px, py)] = rgb(
+
+					uint pixelIndex = pixelIndex_of_pixelXY(px, py);
+					ARGB new_color = rgb(
 						(uint8)(sumR / samples),
 						(uint8)(sumG / samples),
 						(uint8)(sumB / samples)
 					);
+
+					for (int i=0; i<bitmap_zoom; i++) {
+						for (int j=0; j<bitmap_zoom; j++) {
+							ptPixels[pixelIndex + i + width_resolution * bitmap_zoom * j] = new_color;
+						}
+					}
 				}
 				if (lastBitmapRenderID != bitmapRenderID) {
 					if (debug) cout << "cancelling bitmap render " << bitmapRenderID << endl;
@@ -584,25 +609,32 @@ public:
 			for (uint px=xfrom; px<xto; px++) {
 				for (uint py=yfrom; py<yto; py++) {
 
-					uint itersStartIndex = (px * screenHeight + py) * samples;
+					uint itersStartIndex = (px * height_resolution + py) * samples;
 
 					uint sumR=0, sumG=0, sumB=0;
 					ARGB color;
 					
 					for (uint i=0; i<samples; i++) {
 						IterData it = iters[itersStartIndex + i];
-						if (it.inMinibrot())                color = rgb(0, 0, 0);
-						else                                color = gradient(it.iterationCount());
+						if (it.inMinibrot())			      color = rgb(0, 0, 0);
+						else                              color = gradient(it.iterationCount());
 						sumR += getRValue(color);
 						sumG += getGValue(color);
 						sumB += getBValue(color);
 					}
 				
-					ptPixels[pixelIndex_of_pixelXY(px, py)] = rgb(
+					uint pixelIndex = pixelIndex_of_pixelXY(px, py);
+					ARGB new_color = rgb(
 						(uint8)(sumR / samples),
 						(uint8)(sumG / samples),
 						(uint8)(sumB / samples)
 					);
+
+					for (int i=0; i<bitmap_zoom; i++) {
+						for (int j=0; j<bitmap_zoom; j++) {
+							ptPixels[pixelIndex + i + width_resolution * bitmap_zoom * j] = new_color;
+						}
+					}
 				}
 				if (lastBitmapRenderID != bitmapRenderID) {
 					if (debug) cout << "Bitmap render " << bitmapRenderID << " cancelled; terminating thread" << endl;
@@ -613,8 +645,8 @@ public:
 	}
 
 	void renderBitmapFull(bool highlight_guessed, bool multithreading, uint bitmapRenderID) {
-		uint screenWidth = mP.get_screenWidth();
-		uint screenHeight = mP.get_screenHeight();
+		uint screenWidth = mP.width_resolution();
+		uint screenHeight = mP.height_resolution();
 
 		//use multithreading for extra speed when there's no render active
 		if (multithreading) {
@@ -748,7 +780,7 @@ public:
 		{
 			lock_guard<mutex> guard(genericMutex);
 			renderQueueSize++;
-			renderID	 = ++lastRenderID;
+			renderID = ++lastRenderID;
 		}
 
 		//actually start the render
