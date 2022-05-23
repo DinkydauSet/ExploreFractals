@@ -33,9 +33,6 @@
 #include <windows.h>
 #include <shellapi.h>
 
-//lodepng
-#include "lodepng/lodepng.cpp"
-
 //this program
 #include "common.cpp"
 #include "GUI.cpp"
@@ -44,14 +41,9 @@
 #include "Render.cpp"
 #include "windows_util.cpp"
 #include "utilities.cpp"
+#include "test.cpp"
 
 
-//macro to easily time pieces of code
-#define timerstart { auto start = chrono::high_resolution_clock::now();
-#define timerend(name) \
-	auto end = chrono::high_resolution_clock::now(); \
-	chrono::duration<double> elapsed = end - start; \
-	cout << #name << " took " << elapsed.count() << " seconds" << endl; }
 
 
 //I used this to prevent moire by adding some noise to the coordinates but it's too slow:
@@ -258,6 +250,9 @@ uint64 getFeatureMask() {
 
 int main(int argc, char *argv[])
 {
+	//unit tests:
+	testfunction();
+
 	setvbuf(stdout, NULL, _IOLBF, 1024);
 	cout << setprecision(21);	//precision when printing doubles
 	if(debug) cout << "debug version" << endl;
@@ -378,12 +373,19 @@ examples:
 	cout << "output directory: " << write_directory << endl;
 	cout << "interactive use: " << (interactive ? "yes" : "no") << endl;
 	
-
-	NUMBER_OF_THREADS = thread::hardware_concurrency() + 4;
-	printf("number of threads: %d\n", NUMBER_OF_THREADS);
-	if (NUMBER_OF_THREADS < 1) {
-		printf("Couldn't detect the number of cores (default: 12)\n");
-		NUMBER_OF_THREADS = 12;
+	{
+		uint concurency = thread::hardware_concurrency();
+		if (concurency < 1) {
+			NUMBER_OF_THREADS = 12;
+		}
+		else if (concurency < 6) {
+			NUMBER_OF_THREADS = concurency;
+		}
+		else { //todo: https://github.com/DinkydauSet/ExploreFractals/issues/38
+			NUMBER_OF_THREADS = concurency - 1;
+		}
+		//NUMBER_OF_THREADS = 1; //todo
+		cout << "number of threads: " << NUMBER_OF_THREADS << endl;
 	}
 
 	//Detect AVX support, from: https://stackoverflow.com/questions/6121792/how-to-check-if-a-cpu-supports-the-sse3-instruction-set
@@ -448,6 +450,6 @@ examples:
 	// This closes the automatically openened console window. This program needs to be a commandline program because it has commandline parameters that can be used and it gives text output. Windows opens a console window for every console program and I don't want that window. Unfortunately a windows program can't be both a commandline and a GUI program. Previously I used this to close the window:
 	//ShowWindow(GetConsoleWindow(), SW_HIDE);
 	// but that also closes the window when the program is started from CMD or powershell with a command, which is really annoying. FreeConsole causes the automatically opened window to close, but not powershell or CMD. After FreeConsole, powershell and CMD show no text output anymore.
-	FreeConsole();
+	if constexpr( ! debug) FreeConsole();
 	return GUI::GUI_main(defaultParameters, NUMBER_OF_THREADS, initialParameters);
 }

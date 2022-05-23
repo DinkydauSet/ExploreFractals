@@ -25,6 +25,7 @@
 
 //this program
 #include "common.cpp"
+#include "utilities.cpp"
 
 #define get_trick(name) get_ ## name
 #define readonly(type, name) \
@@ -38,9 +39,10 @@ public: inline const type& get_trick(name)() const {\
 
 	All the member functions that change the parameters also update the booleans modifiedSize, modifiedCalculations and modifiedColors, if the function causes a change in size (screenWidth, screenHeight, oversampling), parameters that matter for calculations of iteration counts, and coloring respectively. This can be used to keep track of what actions are needed after making several changes to the parameters.
 */
-class FractalParameters {
-
-	public: FractalParameters()
+class FractalParameters
+{
+public:
+	FractalParameters()
 	: procedure(M2) //because Procedure doesn't have a default constructor
 	, inflectionCoords(250)
 	{
@@ -162,6 +164,8 @@ class FractalParameters {
 	readonly(double_c, partialInflectionCoord)
 	readonly(int, post_transformation_type)
 	readonly(int, pre_transformation_type)
+
+	readonly(uint, gradientLength);
 	
 public:
 	bool setPartialInflectionPower(double power) {
@@ -193,6 +197,7 @@ public:
 			changed = gradientOffset != newGradientOffset;
 			gradientOffset = newGradientOffset;
 			double interpolatedGradientLength = gradientColors.size() * transferFunction(gradientSpeed);
+			gradientLength = uint(interpolatedGradientLength);
 			gradientOffsetTerm = interpolatedGradientLength * gradientOffset;
 		}
 		modifiedColors |= changed;
@@ -223,7 +228,7 @@ public:
 		for (int i=0; i<colors.size(); i++) {
 			ARGB& old = gradientColors[i];
 			const ARGB& new_ = colors[i];
-			if (old != new_)
+			if (bitcast<uint32>(old) != bitcast<uint32>(new_))
 				changed = true;
 			old = new_;
 		}
@@ -650,45 +655,91 @@ public:
 
 	void initialize() {
 		//These are default parameters to ensure that the struct is in a consistent state after creation.
-		if (initialized) return;
-		else initialized = true;
+		if (true) {
+			if (initialized) return;
+			else initialized = true;
 
-		modifiedCalculations = true;
-		modifiedMemory = true;
-		modifiedSize = true;
-		modifiedColors = true;
+			modifiedCalculations = true;
+			modifiedMemory = true;
+			modifiedSize = true;
+			modifiedColors = true;
 
-		target_width = 1200;
-		target_height = 800;
-		oversampling = 1;
-		bitmap_zoom = 1;
-		rotation_angle = 0;
-		rotation_factor = 1;
-		procedure = M2;
-		procedure_identifier = M2.id;
-		julia = false;
-		juliaSeed = -0.75 + 0.1*I;
-		//inflectionCoords.resize(250); //already done in the constructor
-		inflectionCount = 0;
-		inflectionZoomLevel = 0;
+			target_width = 1200;
+			target_height = 800;
+			oversampling = 1;
+			bitmap_zoom = 1;
+			rotation_angle = 0;
+			rotation_factor = 1;
+			procedure = M2;
+			procedure_identifier = M2.id;
+			julia = false;
+			juliaSeed = -0.75 + 0.1*I;
+			//inflectionCoords.resize(250); //already done in the constructor
+			inflectionCount = 0;
+			inflectionZoomLevel = 0;
 		
-		post_transformation_type = 0;
-		pre_transformation_type = 0;
-		gradientColors.resize(4);
-		gradientColors[0] = rgb(255, 255, 255);
-		gradientColors[1] = rgb(52, 140, 167);
-		gradientColors[2] = rgb(0, 0, 0);
-		gradientColors[3] = rgb(229, 140, 45);
-		gradientSpeed = 1;
-		gradientOffset = 0.5;
-		partialInflectionCoord = 0;
-		partialInflectionPower = 1;
-		center = 0;
+			post_transformation_type = 0;
+			pre_transformation_type = 0;
+			gradientColors.resize(4);
+			gradientColors[0] = rgb(255, 255, 255);
+			gradientColors[1] = rgb(52, 140, 167);
+			gradientColors[2] = rgb(0, 0, 0);
+			gradientColors[3] = rgb(220, 159, 57);
+			gradientSpeed = 1;
+			gradientOffset = 0.5;
+			partialInflectionCoord = 0;
+			partialInflectionPower = 1;
+			center = 0;
 
-		setGradientSpeed(38.0);
-		setGradientOffset(0);
-		setMaxIters(4600);
-		setCenterAndZoomPrivate(0, 0);
+			setGradientSpeed(38.0);
+			setGradientOffset(0);
+			setMaxIters(4600);
+			setCenterAndZoomPrivate(0, 0);
+		}
+		//todo: remove test
+		/*
+		else {
+			if (initialized) return;
+			else initialized = true;
+
+			modifiedCalculations = true;
+			modifiedMemory = true;
+			modifiedSize = true;
+			modifiedColors = true;
+
+			target_width = 1200;
+			target_height = 800;
+			oversampling = 1;
+			bitmap_zoom = 1;
+			rotation_angle = 0;
+			rotation_factor = 1;
+			procedure = M2;
+			procedure_identifier = M2.id;
+			julia = false;
+			juliaSeed = -0.75 + 0.1*I;
+			//inflectionCoords.resize(250); //already done in the constructor
+			inflectionCount = 0;
+			inflectionZoomLevel = 0;
+		
+			post_transformation_type = 0;
+			pre_transformation_type = 0;
+			gradientColors.resize(4);
+			gradientColors[0] = rgb(255, 255, 255);
+			gradientColors[1] = rgb(52, 140, 167);
+			gradientColors[2] = rgb(99, 218, 27);
+			gradientColors[3] = rgb(229, 140, 45);
+			gradientSpeed = 1;
+			gradientOffset = 0.5;
+			partialInflectionCoord = 0;
+			partialInflectionPower = 1;
+			center = 0;
+
+			setGradientSpeed(1.0);
+			setGradientOffset(0);
+			setMaxIters(4600);
+			setCenterAndZoomPrivate(0, 0);
+		}
+		*/
 	}
 
 	void fromParameters(const FractalParameters& P) {
@@ -766,9 +817,9 @@ public:
 		Value gradientColorsValue(kArrayType);
 		for (int i=0; i<gradientColors.size(); i++) {
 			Value v(kObjectType);
-			v.AddMember("r", getRValue(gradientColors[i]), a);
-			v.AddMember("g", getGValue(gradientColors[i]), a);
-			v.AddMember("b", getBValue(gradientColors[i]), a);
+			v.AddMember("r", gradientColors[i].R, a);
+			v.AddMember("g", gradientColors[i].G, a);
+			v.AddMember("b", gradientColors[i].B, a);
 			gradientColorsValue.PushBack(v, a);
 		}
 		document.AddMember("gradientColors", gradientColorsValue, a);
@@ -972,5 +1023,59 @@ public:
 		return true;
 	}
 };
+
+bool writeParameters(const FractalParameters& P, string fileName) {
+	bool succes = true;
+	cout << "Writing parameters" << endl;
+	ofstream outfile(fileName);
+	if (outfile.is_open()) {
+		outfile << P.toJson(); //converts parameter struct to JSON
+		outfile.close();
+	}
+	else {
+		cout << "opening outfile failed" << endl;
+		succes = false;
+	}
+	return succes;
+}
+
+enum class ReadResult {
+	succes,
+	parseError,
+	fileError
+};
+
+/*
+	Stores the values in the json string in P. It first tries to change values in a copy of P so that when parsing fails, P is not left in an inconsistent state.
+*/
+ReadResult readParametersJson(FractalParameters& P, string& json) {
+	FractalParameters newS = P;
+	if ( ! newS.fromJson(json)) {
+		return ReadResult::parseError;
+	}
+	P = newS;
+	return ReadResult::succes;
+}
+
+/*
+	Reads JSON from the file and stores the values in P.
+*/
+ReadResult readParametersFile(FractalParameters& P, string fileName) {
+	ReadResult ret;
+	{
+		ifstream infile;
+		infile.open(fileName);
+		if (infile.is_open()) {
+			stringstream strStream; strStream << infile.rdbuf();
+			string json = strStream.str();
+			ret = readParametersJson(P, json); //this changes P if succesful
+		}
+		else {
+			ret = ReadResult::fileError;
+		}
+		infile.close();
+	}
+	return ret;
+}
 
 #endif

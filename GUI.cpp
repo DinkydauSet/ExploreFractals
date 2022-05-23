@@ -60,6 +60,7 @@ using namespace nana;
 
 GUIInterface* theOnlyNanaGUI; //This will be a pointer to a main_form. FractalCanvas instances don't need to know that it's a main_form. It could be "any" GUIInterface.
 HWND main_form_hwnd;
+bool showMorphing = false; //todo: test
 
 namespace EFcolors {
 	const color darkblue = color(10, 36, 106);
@@ -79,6 +80,7 @@ namespace EventSource {
 	enum {
 		default_ = 0
 		,history //this is used to prevent creation of a history item when clicking history items (which "changes" the parameters)
+		,noEvents //for when ignoring the event is intended
 		,fractalPanel
 
 		//Used in the settings panel:
@@ -94,16 +96,15 @@ namespace EventSource {
 		,julia
 		,gradientSpeed
 		,gradientOffset
-
+		
 		//other:
-		,noEvents
+		,gradientSpeedSliding
+		,gradientOffsetSliding
 		,addInflection
 		,removeInflection
 		,zoomIn
 		,zoomOut
 		,reset
-		,speedMouseUp
-		,offsetMouseUp
 		,rotationSliderMouseUp
 		,bitmapZoom
 		,JSON
@@ -201,17 +202,24 @@ void refreshDuringBitmapRender(FractalCanvas* canvas, uint bitmapRenderID)
 }
 
 
+ARGB* graphics_pixelarray(const paint::graphics& graph)
+{
+	HBITMAP hBitmap = reinterpret_cast<HBITMAP>(const_cast<void*>(graph.pixmap()));
+	DIBSECTION dib;
+	GetObject(hBitmap, sizeof(dib), (LPVOID)&dib);
+	BITMAP bitmap = dib.dsBm;
+	return (ARGB*)bitmap.bmBits;
+}
+
 class NanaBitmapManager : public BitmapManager {
 public:
 	ARGB* ptPixels;
 	paint::graphics graph;
 	uint width;
 	uint height;
-	shared_ptr<drawing> drawingContext;
 
-	NanaBitmapManager(shared_ptr<drawing> drawingContext)
-	: graph(nana::size(0,0))
-	, drawingContext(drawingContext)
+	NanaBitmapManager()
+		: graph(nana::size(0,0))
 	{}
 
 	~NanaBitmapManager() {
@@ -219,25 +227,16 @@ public:
 	}
 
 	ARGB* realloc(uint width, uint height) {
+		assert(width > 0); assert(height > 0);
+
 		nana::size size(width, height);
-
 		graph = paint::graphics(size);
-
-		HBITMAP hBitmap = reinterpret_cast<HBITMAP>(const_cast<void*>(graph.pixmap()));
-		DIBSECTION dib;
-		GetObject(hBitmap, sizeof(dib), (LPVOID)&dib);
-		BITMAP bitmap = dib.dsBm;
-		ptPixels = (ARGB*)bitmap.bmBits;
-
+		ptPixels	 = graphics_pixelarray(graph);
 		this->width = width;
 		this->height = height;
-		cout << "reallocated NanaBitmapManager to " << width << " " << height << endl;
-		return ptPixels;
-	}
 
-	void draw() {
-		if(debug) cout << "drawing (NanaBitmapManager)" << endl;
-		drawingContext->update();
+		if(debug) cout << "reallocated NanaBitmapManager to " << width << " " << height << endl;
+		return ptPixels;
 	}
 };
 
@@ -343,6 +342,9 @@ public:
 const vector<int> procedureIDs {
 	M2.id, M3.id, M4.id, M5.id, BURNING_SHIP.id, CHECKERS.id, TRIPLE_MATCHMAKER.id,
 	HIGH_POWER.id, RECURSIVE_FRACTAL.id, PURE_MORPHINGS.id, M512.id
+#ifndef NDEBUG
+	,DEBUG_TEST.id
+#endif
 };
 
 //Post transformations that can be selected in the settings panel
@@ -827,9 +829,8 @@ public:
 
 //dontdo: instead of these being constants, use slider.maximum() (or whatever the function is called) every time the value is needed so that at least coarse maximum can be changed by the user (fine and offset are not important to be user definable).
 constexpr uint COARSE_MAXIMUM = 150;
-//These should ideally be as high as possible. I lowered the values for better performance. A very sensitive slider cancels bitmap renders all the time for even the slightest move, causing none to finish. This can be perceived by the user as bad performance. What is a better solution?
-constexpr uint FINE_MAXIMUM = 250;
-constexpr uint OFFSET_MAXIMUM = 250;
+constexpr uint FINE_MAXIMUM = 1000;
+constexpr uint OFFSET_MAXIMUM = 1000;
 
 class FractalPanel : public EFPanelBase {
 public:
@@ -840,9 +841,8 @@ public:
 	// contains settings.visible
 	// contains content
 
-	//dontdo: use this when constexpr string is available to get rid of some hardcoded numbers in the nana div text
+	//dontdo: c++20 use this when constexpr string is available to get rid of some hardcoded numbers in the nana div text
 	//static constexpr uint sidebar_width = 180;
-	//static constexpr uint json_width = 220;
 	static constexpr uint scrollbarWeight = 20; //this value is still hardcoded in some other places
 	//The reason using these values in div text doesn't work is that place::modify requires a const char*, for example:
 	//pl.modify("sidebar", "weight=180");
@@ -912,8 +912,8 @@ public:
 	string filePath{ "" };
 	string filename{ "" };
 
-	panel<true> fractal{ *this }; //the part that shows the actual render
-	shared_ptr<drawing> dw;
+	//This panel has no graphics and contains no widgets so it's not visisble. At the location of this panel, the fractal is drawn by the main_form tabpanel_dw's draw function. The panel is used only for mouse_move events and to calculate the size of the visible part of the fractal.
+	panel<false> fractal{ this->handle() };
 	shared_ptr<NanaBitmapManager> bitmapManager;
 	FractalCanvas canvas; //canvas is intentionally the last class member, so that the destructor of FractalPanel destroys it first. ~FractalCanvas will wait until all threads using the canvas are finished, and those threads may also use other members of this class.
 
@@ -922,16 +922,15 @@ public:
 	}
 
 	FractalPanel(window wd, uint number_of_threads, bool show_sidepanel)
-	: EFPanelBase(wd)
-	, dw(make_shared<drawing>(fractal))
-	, bitmapManager(make_shared<NanaBitmapManager>(dw))
-	, canvas(number_of_threads, static_pointer_cast<BitmapManager>(bitmapManager), {theOnlyNanaGUI})
-	, sidebar(*this, &canvas)
-	, showing_sidepanel(show_sidepanel)
+		: EFPanelBase(wd)
+		//, dw(make_shared<drawing>(fractal))
+		, bitmapManager(make_shared<NanaBitmapManager>())
+		, canvas(number_of_threads, static_pointer_cast<BitmapManager>(bitmapManager), {theOnlyNanaGUI})
+		, sidebar(*this, &canvas)
+		, showing_sidepanel(show_sidepanel)
 	{
-		fractal.bgcolor(colors::black);
-
 		// Scrollbar weight is in pixels, ignoring DPI, just to make it easier to calculate if they're necessary for the fractal size (which is a bit complicated because the precense of a scrollbar costs space in itself).
+		//The part called fractal is just to reserve space. It contains no widgets. It's where the fractal is shown by the main window.
 		pl.div(R"(
 			<sidebar weight=180>
 			<weight=1px>
@@ -952,30 +951,15 @@ public:
 		hscrollbar.hide();
 		pl.collocate();
 
-		//
-		//	Copies the bitmap (the fractal's pixels) to the screen (the given graph), offset by the position of the scrollbars (which determine offsetX and offsetY) if there are any.
-		//
-		dw->draw([&, this](paint::graphics& graph)
-		{
-			uint width = canvas.P().width_bitmap();
-			uint height = canvas.P().height_bitmap();
-			
-			paint::graphics& g = bitmapManager->graph; //the graphics object of the bitmap
-			rectangle whole_bitmap(0, 0, width, height); //the part of the bitmap to display on the screen
-			graph.bitblt(whole_bitmap, g, point(offsetX, offsetY));
-		});
-
 		hscrollbar.step(40);
 		hscrollbar.events().value_changed([&](const arg_scroll& arg)
 		{
 			offsetX = hscrollbar.value();
-			dw->update();
 		});
 		vscrollbar.step(40);
 		vscrollbar.events().value_changed([&](const arg_scroll& arg)
 		{
 			offsetY = vscrollbar.value();
-			dw->update();
 		});
 
 		//The resizing event takes place before the contents of the window are drawn. The resized event takes place afterwards.
@@ -1009,11 +993,11 @@ public:
 		//
 		auto onSpeedMouseUp = [this](const arg_mouse& arg)
 		{
-			canvas.parametersChangedEvent(EventSource::speedMouseUp);
+			canvas.parametersChangedEvent(EventSource::gradientSpeed);
 		};
 		auto onOffsetMouseUp = [this](const arg_mouse& arg)
 		{
-			canvas.parametersChangedEvent(EventSource::offsetMouseUp);
+			canvas.parametersChangedEvent(EventSource::gradientOffset);
 		};
 
 
@@ -1026,7 +1010,7 @@ public:
 				double currentSpeed = P.get_gradientSpeed();
 				double newSpeed = posCoarse + (currentSpeed - (int)currentSpeed);
 				P.setGradientSpeed(newSpeed);
-			}, EventSource::gradientSpeed, false);
+			}, EventSource::gradientSpeedSliding, false);
 		});
 
 		coarse.events().mouse_up(onSpeedMouseUp);
@@ -1048,7 +1032,7 @@ public:
 				})();
 
 				P.setGradientSpeed(newSpeed);
-			}, EventSource::gradientSpeed, false);
+			}, EventSource::gradientSpeedSliding, false);
 		});
 
 		fine.events().mouse_up(onSpeedMouseUp);
@@ -1061,7 +1045,7 @@ public:
 			canvas.changeParameters([=](FractalParameters& P)
 			{
 				P.setGradientOffset(newGradientOffset);
-			}, EventSource::gradientOffset, false);
+			}, EventSource::gradientOffsetSliding, false);
 		});
 
 		offset.events().mouse_up(onOffsetMouseUp);
@@ -1097,91 +1081,6 @@ public:
 					}, EventSource::removeInflection);
 				}
 			}
-		});
-
-		//zoom action
-		fractal.events().mouse_wheel([this](const arg_wheel& arg)
-		{
-			const uint oversampling = canvas.P().get_oversampling();
-			const uint bitmapWidth = canvas.P().width_bitmap();
-			const uint bitmapHeight = canvas.P().height_bitmap();
-			const uint bitmap_zoom = canvas.P().get_bitmap_zoom();
-
-			//location of the click in the bitmap
-			int xPos = arg.pos.x + offsetX;
-			int yPos = arg.pos.y + offsetY;
-
-			if (
-				xPos < 0		|| xPos > bitmapWidth
-				|| yPos < 0 || yPos > bitmapHeight
-			) {
-				return;
-			}
-
-			canvas.cancelRender();
-
-			bool zoomIn = arg.upwards;
-			{
-				//generate preview of the zoomed in fractal
-				paint::graphics panel_graphics;
-				API::window_graphics(fractal.handle(), panel_graphics);
-				paint::graphics& bitmap_graphics = bitmapManager->graph;
-			
-				if (zoomIn) {
-					rectangle fromPart(
-						xPos - xPos / 4 - offsetX	,yPos - yPos / 4 - offsetY
-						,bitmapWidth / 4				,bitmapHeight / 4
-					);
-					rectangle toPart(0, 0, bitmapWidth, bitmapHeight);
-					panel_graphics.stretch(fromPart, bitmap_graphics, toPart);
-				}
-				else {
-					rectangle fromPart(
-						0 - offsetX		,0 - offsetY
-						,bitmapWidth		,bitmapHeight
-					);
-					rectangle toPart(
-						xPos - xPos / 4		,yPos - yPos / 4
-						,bitmapWidth / 4		,bitmapHeight / 4
-					);
-					panel_graphics.stretch(fromPart, bitmap_graphics, toPart);
-				}
-
-				//Confusing thing about nana:
-				//With bitblt x.bitblt(..., y... means x is the destination and y is the source
-				//With stretch, x.stretch(..., y... means y is the destination and x is the source
-			}
-
-			canvas.changeParameters([=](FractalParameters& P)
-			{
-				const uint width = P.width_canvas();
-				const uint height = P.height_canvas();
-
-				double zooms = zoomIn ? 2 : -2; //these 2 and -2 are the zoom sizes used for zooming in and out. They could be any number so it could be a setting.
-				double magnificationFactor = pow(2, -zooms);
-
-				double_c zoomLocation = canvas.map(xPos * oversampling / bitmap_zoom, yPos * oversampling / bitmap_zoom);
-
-				//This is the difference between the location that is being zoomed in on (the location of the mouse cursor) and the right and top borders of the viewport, expressed as a fraction.
-				double margin_right = xPos / (double)bitmapWidth;
-				double margin_top = yPos / (double)bitmapHeight;
-				 
-				double margin_right_size = width * margin_right * P.get_x_spacing();
-				double margin_top_size = height * margin_top * P.get_y_spacing();
-
-				double margin_right_new_size = margin_right_size * magnificationFactor;
-				double margin_top_new_size = margin_top_size * magnificationFactor;
-
-				double_c new_topleftcorner =
-					real(zoomLocation) - margin_right_new_size
-					+ (imag(zoomLocation) + margin_top_new_size) * I;
-
-				double_c new_center =
-					real(new_topleftcorner) + (margin_right_new_size / margin_right) * 0.5
-					+ (imag(new_topleftcorner) - (margin_top_new_size / margin_top) * 0.5) * I;
-
-				P.setCenterAndZoomRelative(new_center, P.get_zoomLevel() + zooms); 
-			}, zoomIn ? EventSource::zoomIn : EventSource::zoomOut, false);
 		});
 	}
 
@@ -1358,8 +1257,6 @@ public:
 
 		bar.events().removed([this](const arg_tabbar_removed<string>& arg)
 		{
-			//When there's a removed event the panel was already removed from the tabbar and the tab is not visible anymore. A background thread is used to clean up resources because there can be active renders that have to end before resources can be cleaned up. By waiting from a different thread, the program doesn't hang while waiting.
-
 			uint index = arg.item_pos;
 
 			auto panel = panels[index];
@@ -1378,19 +1275,21 @@ public:
 				panels.erase(panels.begin() + index);
 				statusbarLabels.erase(statusbarLabels.begin() + index);
 
-				//wait for this canvas' renders to finish in a different thread, so the GUI keeps responding
+				//There can be active renders that have to end before resources can be cleaned up. By waiting from a different thread, the program doesn't hang while waiting.
 				thread([canvas]()
 				{
 					if(debug) cout << "thread started to clean up resources of the tab of canvas " << canvas << endl;
 
-					//waits for all renders to finish by using mutexes
+					//waits for all renders to finish
 					//Because only the GUI thread starts renders, after this there will be no renders going on.
 					canvas->end_all_usage();
 
 					//instruct the GUI thread to clean up resources for this canvas:
 					PostMessage(main_form_hwnd, Message::CLEANUP_FRACTAL_TAB, reinterpret_cast<WPARAM>(canvas), 0);
 				}).detach();
-			} 
+			}
+
+			cout << "removed event vanuit EFTabbar " << endl;
 		});
 	}
 
@@ -1425,7 +1324,6 @@ public:
 		canvas_panel_map[&(new_panel->canvas)] = new_panel;
 		statusbarLabels.push_back(TabStatusbarLabels());
 		bar.append(title, *new_panel); // This needs to be done last because it causes a activated event on the tabbar, of which the handler expects statusbarLabels etc. to exist.
-
 		return new_panel;
 	}
 
@@ -1571,6 +1469,30 @@ void handleReadResult(window wd, ReadResult res) {
 }
 
 
+//
+//	Utilities to manage child windows
+//
+// This base class makes it possible to store pointers to all child windows in 1 vector, even if the windows are of different types.
+class child_window_base {
+public:
+	virtual ~child_window_base() {}
+	virtual void focus() = 0;
+};
+
+// The instances of this template are the actual child window classes.
+template <typename formtype>
+class child_window : public child_window_base {
+	static_assert(std::is_base_of<form, formtype>::value, "formtype must be a subclass of form");
+public:
+	formtype fm;
+	void focus() { fm.focus(); }
+};
+
+
+//
+// Types used as child windows
+//
+
 class help_form : public form {
 public:
 	place& pl{ get_place() };
@@ -1666,17 +1588,18 @@ public:
 class main_form : public form, public GUIInterface
 {
 public:
+	//widgets
 	place& pl{ get_place() };
 
-	panel<false> tabpanel{ *this };
+	panel<true> tabpanel{ *this };
 	place tabpanel_pl;
+	drawing tabpanel_dw{ tabpanel };
 
 	menubar menu_{ *this };
 	EFtabbar tabs;
 	EFstatusbar statusbar{ *this };
 
 	button newTabButton{ *this, "New fractal" };
-	//button settingsButton{ *this, "Settings" }; //button to open a settings tab; not used
 	button fitToWindowButton{ *this, "Fit to window" };
 	button fitToFractalButton{ *this, "Fit to fractal" };
 	button resetButton{ *this, "Reset" };
@@ -1694,134 +1617,30 @@ public:
 	label settingsTriangle{ *this, "▲" };
 	label settingsFiller{ *this, "" }; //label without text, used to center the text "Settings". To the left of the settingsLabel there's the triangle label. By placing another label of the same size to the right the text is centered correctly.
 
+
+	//other data
+	vector<unique_ptr<child_window_base>> childWindows;
+
 	uint number_of_threads;
 	FractalParameters defaultParameters;
+	FractalCanvas* activeCanvas = nullptr;
+	FractalPanel* activeFractalPanel = nullptr;
 
-
-
-	//Utilities to manage child windows
-
-	// This base class makes it possible to store pointers to all child windows in 1 vector, even if the windows are of different types.
-	class child_window_base {
-	public:
-		virtual ~child_window_base() {}
-		virtual void focus() = 0;
-	};
-
-	// The instances of this template are the actual child window classes.
-	template <typename formtype>
-	class child_window : public child_window_base {
-		static_assert(std::is_base_of<form, formtype>::value, "formtype must be a subclass of form");
-	public:
-		formtype fm;
-		void focus() { fm.focus(); }
-	};
-
-	vector<shared_ptr<child_window_base>> childWindows;
-
-	/*
-		creates a childwindow of the specified type
-
-		The reason for PostMessage is this: I want the window to be removed from the vector of childWindows when it's destroyed. Doing so during the handling of the destroyed event causes a deadlock. I don't know why; nana must use some mutex during the event that is required by one of the destructors. The solution is to postpone cleanup of the resources until after the event has been handled, by sending a new message.
-	*/
-	template <typename formtype>
-	void spawn_child()
-	{
-		shared_ptr<child_window<formtype>> child = make_shared<child_window<formtype>>();
-		childWindows.push_back(child);
-
-		child_window_base* childpointer = child.get();
-	
-		child->fm.events().destroy([childpointer]()
-		{
-			if(debug) cout << "child window is being closed" << endl;
-
-			PostMessage(main_form_hwnd, Message::CLEANUP_CHILD_WINDOW, reinterpret_cast<WPARAM>(childpointer), 0);
-
-			if(debug) cout << "child window closed" << endl;
-		});
-
-		//type specific things
-		if constexpr( is_same<formtype, json_form>::value )
-		{
-			json_form& json = child->fm;
-
-			json.capture.events().click([this, &json](const arg_click& arg)
-			{
-				FractalCanvas* canvas = activeCanvas();
-				if (canvas != nullptr) {
-					json.text.caption( canvas->P().toJson() );
-				}
-				else {
-					msgbox mb(json, "Error", msgbox::ok);
-					mb.icon(mb.icon_error);
-					mb << "No fractal tab open";
-					mb.show();
-				}
-			});
-
-			json.apply.events().click([this, &json](const arg_click& arg)
-			{
-				FractalCanvas* canvas = activeCanvas();
-				if (canvas != nullptr) {
-					//try to apply the changes to a copy first
-					FractalParameters P = canvas->P();
-					string textContent = json.text.caption();
-					bool success = P.fromJson(textContent);
-
-					if (success) {
-						canvas->changeParameters(P, EventSource::JSON);
-					}
-					else {
-						msgbox mb(json, "Error", msgbox::ok);
-						mb.icon(mb.icon_error);
-						mb << "Invalid JSON";
-						mb.show();
-					}
-				}
-				else {
-					msgbox mb(json, "Error", msgbox::ok);
-					mb.icon(mb.icon_error);
-					mb << "No fractal tab open";
-					mb.show();
-				}
-			});
-		}
-
-		child->fm.show();
-	}
-
-	// Creates a childwindow of the specified type if none exist yet, otherwise focuses the existing one
-	template <typename formtype>
-	void spawn_unique_child()
-	{
-		for (int i=0; i<childWindows.size(); i++)
-		{
-			child_window<formtype>* child = dynamic_cast<child_window<formtype>*>(childWindows[i].get());
-			if (child != nullptr)
-			{
-				// This type of window already exists. Focus it:	
-				child->focus();
-				return;
-			}
-		}
-
-		//This type of windows does not exist yet. Create one:
-		spawn_child<formtype>();
-	}
-
+	//a buffer to generate animation frames in
+	paint::graphics tabpanel_graph;
 
 
 	main_form(FractalParameters& defaultParameters_, uint number_of_threads_)
-	: form( API::make_center(1200, 800) )
-	, defaultParameters(defaultParameters_)
-	, tabs(*this, number_of_threads_)
-	, number_of_threads(number_of_threads_)
+		: form( API::make_center(1200, 800) )
+		, defaultParameters(defaultParameters_)
+		, tabs(*this, number_of_threads_)
+		, number_of_threads(number_of_threads_)
 	{
 		tabpanel_pl.bind(tabpanel);
 		tabpanel_pl.div("<x>");
-
+		
 		bgcolor(colors::black);
+		tabpanel.bgcolor(colors::black);
 		statusbar.bgcolor(colors::black); //this effectively colors only the spacings between the labels because the labels on the statusbar have a color
 
 		//menubar
@@ -1843,11 +1662,10 @@ public:
 			});
 			menu_.at(i).append("Save image", [this](menu::item_proxy& ip)
 			{
-				FractalCanvas* canvas = activeCanvas();
-				if (canvas != nullptr) {
-					string path = getDate() + " " + canvas->P().get_procedure().name();
+				if (activeCanvas != nullptr) {
+					string path = getDate() + " " + activeCanvas->P().get_procedure().name();
 					if (BrowseFile(getHwnd(), FALSE, "Save PNG", "Portable Network Graphics (PNG)\0*.png\0\0", path)) {
-						saveImage(canvas, path);
+						saveImage(activeCanvas, path);
 					}
 				}
 			});
@@ -1865,16 +1683,14 @@ public:
 			});
 			menu_.at(i).append("View guessed pixels", [this](menu::item_proxy& ip)
 			{
-				FractalCanvas* canvas = activeCanvas();
-				if (canvas != nullptr) {
-					canvas->enqueueBitmapRender(false, true);
+				if (activeCanvas != nullptr) {
+					activeCanvas->enqueueBitmapRender(false, true);
 				}
 			});
 			menu_.at(i).append("View regular colors", [this](menu::item_proxy& ip)
 			{
-				FractalCanvas* canvas = activeCanvas();
-				if (canvas != nullptr) {
-					canvas->enqueueBitmapRender(false, false);
+				if (activeCanvas != nullptr) {
+					activeCanvas->enqueueBitmapRender(false, false);
 				}
 			});
 			menu_.at(i).append("JSON", [this](menu::item_proxy& ip)
@@ -1889,9 +1705,8 @@ public:
 			i++;
 			menu_.at(i).append("Cancel render", [this](menu::item_proxy& ip)
 			{
-				FractalCanvas* canvas = activeCanvas();
-				if (canvas != nullptr) {
-					canvas->cancelRender();
+				if (activeCanvas != nullptr) {
+					activeCanvas->cancelRender();
 				}
 			});
 
@@ -1921,18 +1736,6 @@ Fractalforums thread: https://fractalforums.org/other/55/explore-fractals-inflec
 		{
 			create_fractal_tab(defaultParameters, defaultParameters.get_procedure().name());
 		});
-		//dontdo: settings tab kind is unused
-		/*
-		settingsButton.events().click([this]()
-		{
-			if (tabs.hasSettings()) {
-				tabs.bar.activated(tabs.settingsTabIndex);
-			}
-			else {
-				create_settings_tab();
-			}
-		});
-		*/
 		fitToFractalButton.events().click([this]()
 		{
 			fit_to_fractal();
@@ -1943,9 +1746,8 @@ Fractalforums thread: https://fractalforums.org/other/55/explore-fractals-inflec
 		});
 		resetButton.events().click([this]()
 		{
-			FractalCanvas* canvas = activeCanvas();
-			if (canvas != nullptr) {
-				canvas->changeParameters([this](FractalParameters& P)
+			if (activeCanvas != nullptr) {
+				activeCanvas->changeParameters([this](FractalParameters& P)
 				{
 					P.setGradientSpeed(defaultParameters.get_gradientSpeed());
 					P.setGradientOffset(defaultParameters.get_gradientOffset());
@@ -1959,9 +1761,8 @@ Fractalforums thread: https://fractalforums.org/other/55/explore-fractals-inflec
 		});
 		toggleJulia.events().click([this]()
 		{
-			FractalCanvas* canvas = activeCanvas();
-			if (canvas != nullptr) {
-				canvas->changeParameters([](FractalParameters& P)
+			if (activeCanvas != nullptr) {
+				activeCanvas->changeParameters([](FractalParameters& P)
 				{
 					P.setJulia( ! P.get_julia());
 					if (P.get_julia()) {
@@ -1976,9 +1777,8 @@ Fractalforums thread: https://fractalforums.org/other/55/explore-fractals-inflec
 		});
 		leftButton.events().click([this]()
 		{
-			FractalCanvas* canvas = activeCanvas();
-			if (canvas != nullptr) {
-				canvas->changeParameters([](FractalParameters& P)
+			if (activeCanvas != nullptr) {
+				activeCanvas->changeParameters([](FractalParameters& P)
 				{
 					P.setRotation(P.get_rotation_angle() - 0.05);
 				}, EventSource::rotation);
@@ -1986,9 +1786,8 @@ Fractalforums thread: https://fractalforums.org/other/55/explore-fractals-inflec
 		});
 		rightButton.events().click([this]()
 		{
-			FractalCanvas* canvas = activeCanvas();
-			if (canvas != nullptr) {
-				canvas->changeParameters([](FractalParameters& P)
+			if (activeCanvas != nullptr) {
+				activeCanvas->changeParameters([](FractalParameters& P)
 				{
 					P.setRotation(P.get_rotation_angle() + 0.05);
 				}, EventSource::rotation);
@@ -1997,9 +1796,8 @@ Fractalforums thread: https://fractalforums.org/other/55/explore-fractals-inflec
 
 		saveInflectionZoomButton.events().click([this]
 		{
-			FractalCanvas* canvas = activeCanvas();
-			if (canvas != nullptr) {
-				canvas->changeParameters([](FractalParameters& P)
+			if (activeCanvas != nullptr) {
+				activeCanvas->changeParameters([](FractalParameters& P)
 				{
 					P.setInflectionZoomLevel();
 				}, EventSource::inflectionZoom);
@@ -2021,6 +1819,42 @@ Fractalforums thread: https://fractalforums.org/other/55/explore-fractals-inflec
 		settingsTriangle.text_align(align::center, align_v::center);
 		settingsFiller.bgcolor(EFcolors::darkblue);
 
+		//This function draws on tabpanel directly. FractalPanels on top of it have no widgets at the location of the viewport, so the FractalPanels are transparent there, which makes it look like the viewport belongs to the tab, but there is only one panel (tabpanel) in use where fractals are drawn. This saves memory compared to having a panel for each tab.
+		tabpanel_dw.draw([this](paint::graphics& graph)
+		{
+			FractalCanvas* canvas = activeCanvas;
+			if (canvas != nullptr)
+			{
+				assert(activeFractalPanel != nullptr);
+
+				uint width = canvas->P().width_bitmap();
+				uint height = canvas->P().height_bitmap();
+
+				//where to draw
+				//The location to draw is the fractal part, which is the rectangle between the sidebar, sliders and scrollbars.
+				nana::point viewport_pos = activeFractalPanel->fractal.pos();
+				nana::size viewport_size = activeFractalPanel->fractal.size();
+				rectangle draw_area(viewport_pos, viewport_size);
+
+				//offset by scrollbars
+				int offsetX = activeFractalPanel->offsetX;
+				int offsetY = activeFractalPanel->offsetY;
+
+				//the bitmap containing the fractal's colors
+				paint::graphics& g = activeFractalPanel->bitmapManager->graph;
+
+				//copy part (possibly all) of the bitmap to the screen at the right position
+				graph.bitblt(draw_area, g, nana::point(offsetX, offsetY));
+			}
+		});
+
+		/*
+		tabpanel.events().resizing([this](const arg_resizing& arg)
+		{
+			if(debug) cout << "tabpanel resized to: " << arg.width << ", " << arg.height << endl;
+			tabpanel_graph = paint::graphics(nana::size(arg.width, arg.height));
+		});
+		*/
 
 		//This graphics object is used to measure text width in pixels. It's not a nice solution but it works. What it returns is the size of the text if it were rendered on this graphic, which means that graphic already has to be big enough for the text to fit, otherwise the returned size is too low. I set the width to 1000 pixels because that ought to be enough for every button caption. (I tried a height of 0 but that doesn't work.)
 		paint::graphics measure(nana::size(1000,1));
@@ -2123,25 +1957,140 @@ Fractalforums thread: https://fractalforums.org/other/55/explore-fractals-inflec
 			if (pane->kind() == TabKind::Fractal) {
 				auto fractalpanel = static_pointer_cast<FractalPanel>(pane);
 
+				activeFractalPanel = fractalpanel.get();
+				activeCanvas = &(fractalpanel->canvas);
+
 				if ( ! fractalpanel->showing_sidepanel)	settingsTriangle.caption("▼");
 				else										settingsTriangle.caption("▲");
 
 				caption(windowTitle(fractalpanel.get()));
+				tabpanel_dw.update();
 			}
 			else {
+				activeCanvas = nullptr;
+				activeFractalPanel = nullptr;
 				caption("ExploreFractals");
 			}
 		});
 		
-		//The removed event is set in the constructor of the EFtabbar
+		//The removed event is also set in the constructor of the EFtabbar
+
+		tabs.bar.events().removed([this](const arg_tabbar<string>& arg)
+		{
+			//This assert fails when there is only one tab and that tab is removed, which indicates that the removed event occurs before the actual removal:
+			//assert(bar.length() == 0);
+			//That means the last tab is removed when tabs.bar.length() == 1.
+
+			if (tabs.bar.length() == 1)
+			{
+				activeCanvas = nullptr;
+				activeFractalPanel = nullptr;
+			}
+			tabpanel_dw.update();
+		});
 	}
 
+
+	//
+	//	Functions for child windows
+	//
+
+	// creates a childwindow of the specified type
+	//	The reason for PostMessage is this: I want the window to be removed from the vector of childWindows when it's destroyed. Doing so during the handling of the destroyed event causes a deadlock. I don't know why; nana must use some mutex during the event that is required by one of the destructors. The solution is to postpone cleanup of the resources until after the event has been handled, by sending a new message.
+	//
+	template <typename formtype>
+	void spawn_child()
+	{		
+		// I use emplace_back instead of push_back because emplace_back returns the inserted element.
+		auto& inserted = childWindows.emplace_back( make_unique<child_window<formtype>>() );
+		child_window_base* basepointer = inserted.get();
+		child_window<formtype>* child = static_cast<child_window<formtype>*>(basepointer);
+
+		child->fm.events().destroy([basepointer]()
+		{
+			if(debug) cout << "child window is being closed" << endl;
+
+			PostMessage(main_form_hwnd, Message::CLEANUP_CHILD_WINDOW, reinterpret_cast<WPARAM>(basepointer), 0);
+
+			if(debug) cout << "child window closed" << endl;
+		});
+
+		//type specific things
+		if constexpr( is_same<formtype, json_form>::value )
+		{
+			json_form& json = child->fm;
+
+			json.capture.events().click([this, &json](const arg_click& arg)
+			{
+				FractalCanvas* canvas = activeCanvas;
+				if (canvas != nullptr) {
+					json.text.caption( canvas->P().toJson() );
+				}
+				else {
+					msgbox mb(json, "Error", msgbox::ok);
+					mb.icon(mb.icon_error);
+					mb << "No fractal tab open";
+					mb.show();
+				}
+			});
+
+			json.apply.events().click([this, &json](const arg_click& arg)
+			{
+				FractalCanvas* canvas = activeCanvas;
+				if (canvas != nullptr) {
+					//try to apply the changes to a copy first
+					FractalParameters P = canvas->P();
+					string textContent = json.text.caption();
+					bool success = P.fromJson(textContent);
+
+					if (success) {
+						canvas->changeParameters(P, EventSource::JSON);
+					}
+					else {
+						msgbox mb(json, "Error", msgbox::ok);
+						mb.icon(mb.icon_error);
+						mb << "Invalid JSON";
+						mb.show();
+					}
+				}
+				else {
+					msgbox mb(json, "Error", msgbox::ok);
+					mb.icon(mb.icon_error);
+					mb << "No fractal tab open";
+					mb.show();
+				}
+			});
+		}
+
+		child->fm.show();
+	}
+
+	// Creates a childwindow of the specified type if none exist yet, otherwise focuses the existing one
+	template <typename formtype>
+	void spawn_unique_child()
+	{
+		for (int i=0; i<childWindows.size(); i++)
+		{
+			child_window<formtype>* child = dynamic_cast<child_window<formtype>*>(childWindows[i].get());
+			if (child != nullptr)
+			{
+				// This type of window already exists. Focus it:	
+				child->focus();
+				return;
+			}
+		}
+
+		//This type of windows does not exist yet. Create one:
+		spawn_child<formtype>();
+	}
+
+
+
 	void togglePanel(){
-		FractalCanvas* canvas = activeCanvas();
-		if (canvas != nullptr) {
-			assert(tabs.containsCanvas(canvas));
+		if (activeCanvas != nullptr) {
+			assert(tabs.containsCanvas(activeCanvas));
 			
-			auto active_panel = static_pointer_cast<FractalPanel>(tabs.canvas_panel_map[canvas]);
+			auto active_panel = static_pointer_cast<FractalPanel>(tabs.canvas_panel_map[activeCanvas]);
 			bool currently_showing = active_panel->showing_sidepanel;
 			active_panel->showSidepanel( ! currently_showing); //toggle
 
@@ -2149,6 +2098,7 @@ Fractalforums thread: https://fractalforums.org/other/55/explore-fractals-inflec
 			else						settingsTriangle.caption("▲");
 
 			active_panel->recalculateScrollbars();
+			tabpanel_dw.update();
 		}
 	};
 
@@ -2194,46 +2144,110 @@ Fractalforums thread: https://fractalforums.org/other/55/explore-fractals-inflec
 			}
 
 			double_c coordinate = fractalpanel->canvas.P().map_with_transformations(xPos, yPos);
-			uint iterationCount = fractalpanel->canvas.getIterData(xPos, yPos).iterationCount();
+			uint iterationCount = fractalpanel->canvas.getIterData(xPos, yPos).iterationCount;
 				
 			updateStatusbarCursorinfo(coordinate, iterationCount);
 		});
 
-		return fractalpanel;
-	}
-
-	/*
-	void create_settings_tab() {
-		shared_ptr<ProgramSettingsPanel> new_panel = tabs.addSettingsPanel("Settings");
-		pl["tabpanel"].fasten(*new_panel);
-		pl.collocate();
-
-		TabStatusbarLabels& labels = tabs.statusbarLabels[tabs.indexOf(new_panel.get())];
-		setTabStatusbarLabels(labels);
-	}
-	*/
-
-	FractalPanel* activeFractalPanel()
-	{
-		if (tabs.bar.length() > 0)
+		//The fractalpanel also registers handlers for these events that update offsetX and offsetY. Those handlers are executed first because they are registered first.
+		fractalpanel->hscrollbar.events().value_changed([this](const arg_scroll& arg)
 		{
-			shared_ptr<EFPanelBase> active_panel = tabs.panels[tabs.bar.activated()];
-			if (active_panel->kind() == TabKind::Fractal) {
-				return static_pointer_cast<FractalPanel>(active_panel).get();
+			tabpanel_dw.update();
+		});
+		fractalpanel->vscrollbar.events().value_changed([this](const arg_scroll& arg)
+		{
+			tabpanel_dw.update();
+		});
+
+		fractalpanel->fractal.events().mouse_wheel([this, fp=fractalpanel.get()](const arg_wheel& arg)
+		{
+			FractalCanvas& canvas = fp->canvas;
+			const uint oversampling = canvas.P().get_oversampling();
+			const uint bitmapWidth = canvas.P().width_bitmap();
+			const uint bitmapHeight = canvas.P().height_bitmap();
+			const uint bitmap_zoom = canvas.P().get_bitmap_zoom();
+
+			//location of the cursor in the bitmap
+			int xPos = arg.pos.x + fp->offsetX;
+			int yPos = arg.pos.y + fp->offsetY;
+
+			if (
+				xPos < 0		|| xPos > bitmapWidth
+				|| yPos < 0 || yPos > bitmapHeight
+			) {
+				return;
 			}
-		}
 
-		return nullptr;
-	}
+			canvas.cancelRender();
 
-	FractalCanvas* activeCanvas()
-	{
-		FractalPanel* active_panel = activeFractalPanel();
+			bool zoomIn = arg.upwards;
+			{
+				//generate preview of the zoomed in fractal
+				API::window_graphics(tabpanel.handle(), tabpanel_graph);
+				paint::graphics& bitmap_graphics = fp->bitmapManager->graph;
 
-		if (active_panel != nullptr)
-			return &(active_panel->canvas);
-		else
-			return nullptr;
+				nana::point viewport_pos = fp->fractal.pos();
+			
+				if (zoomIn) {
+					rectangle fromPart(
+						nana::point(xPos - xPos / 4 - fp->offsetX, yPos - yPos / 4 - fp->offsetY) + viewport_pos
+						,nana::size(bitmapWidth / 4,               bitmapHeight / 4)
+					);
+					rectangle toPart(nana::point(0, 0), nana::size(bitmapWidth, bitmapHeight));
+					tabpanel_graph.stretch(fromPart, bitmap_graphics, toPart);
+				}
+				else {
+					rectangle fromPart(
+						nana::point(0 - fp->offsetX, 0 - fp->offsetY) + viewport_pos
+						,nana::size(bitmapWidth,     bitmapHeight)
+					);
+					rectangle toPart(
+						nana::point(xPos - xPos / 4,    yPos - yPos / 4)
+						,nana::size(bitmapWidth / 4,    bitmapHeight / 4)
+					);
+					tabpanel_graph.stretch(fromPart, bitmap_graphics, toPart);
+				}
+
+				//Confusing thing about nana:
+				//With bitblt x.bitblt(..., y... means x is the destination and y is the source
+				//With stretch, x.stretch(..., y... means y is the destination and x is the source
+				
+				tabpanel_dw.update();
+			}
+
+			canvas.changeParameters([=, &canvas](FractalParameters& P)
+			{
+				const uint width = P.width_canvas();
+				const uint height = P.height_canvas();
+
+				double zooms = zoomIn ? 2 : -2; //these 2 and -2 are the zoom sizes used for zooming in and out. They could be any number so it could be a setting.
+				double magnificationFactor = pow(2, -zooms);
+
+				double_c zoomLocation = canvas.map(xPos * oversampling / bitmap_zoom, yPos * oversampling / bitmap_zoom);
+
+				//This is the difference between the location that is being zoomed in on (the location of the mouse cursor) and the right and top borders of the viewport, expressed as a fraction.
+				double margin_right = xPos / (double)bitmapWidth;
+				double margin_top = yPos / (double)bitmapHeight;
+				 
+				double margin_right_size = width * margin_right * P.get_x_spacing();
+				double margin_top_size = height * margin_top * P.get_y_spacing();
+
+				double margin_right_new_size = margin_right_size * magnificationFactor;
+				double margin_top_new_size = margin_top_size * magnificationFactor;
+
+				double_c new_topleftcorner =
+					real(zoomLocation) - margin_right_new_size
+					+ (imag(zoomLocation) + margin_top_new_size) * I;
+
+				double_c new_center =
+					real(new_topleftcorner) + (margin_right_new_size / margin_right) * 0.5
+					+ (imag(new_topleftcorner) - (margin_top_new_size / margin_top) * 0.5) * I;
+
+				P.setCenterAndZoomRelative(new_center, P.get_zoomLevel() + zooms); 
+			}, zoomIn ? EventSource::zoomIn : EventSource::zoomOut, false);
+		});
+
+		return fractalpanel;
 	}
 
 	void associateFile(FractalCanvas* canvas, string path)
@@ -2256,7 +2270,9 @@ Fractalforums thread: https://fractalforums.org/other/55/explore-fractals-inflec
 	{
 		assert( dynamic_cast<NanaBitmapManager*>(canvas->bitmapManager.get()) != nullptr ); //it is a NanaBitmapManager
 
-		static_pointer_cast<NanaBitmapManager>(canvas->bitmapManager)->draw();
+		if (canvas == activeCanvas) {
+			tabpanel_dw.update();
+		}
 	}
 
 	
@@ -2351,24 +2367,24 @@ Fractalforums thread: https://fractalforums.org/other/55/explore-fractals-inflec
 		//actions related to the source_id
 
 		//Changing a slider's value causes a value_changed event which updates the parameters again, which causes this function to be called again... risking an infinite recursion. The "if" here is to prevent that problem.
-		if (source_id != EventSource::gradientOffset && source_id != EventSource::gradientSpeed)
+		if (source_id != EventSource::gradientOffsetSliding && source_id != EventSource::gradientSpeedSliding)
 			fractalpanel->updateControls();
 		else
 			fractalpanel->updateControls(false);
 
 		//A history item is created when the gradient changes and the mouse button is released, but not while the mouse button is held. This prevents generation of many history items per second while using the sliders.
-		if (source_id == EventSource::speedMouseUp)
+		if (source_id == EventSource::gradientSpeed)
 		{
 			fractalpanel->sidebar.history.addItem(P, "speed " + to_string(P.get_gradientSpeed()));
 		}
-		else if (source_id == EventSource::offsetMouseUp)
+		else if (source_id == EventSource::gradientOffset)
 		{
 			fractalpanel->sidebar.history.addItem(P, "offset " + to_string(P.get_gradientOffset()));
 		}
 		else if (
 			source_id != EventSource::history
-			&& source_id != EventSource::gradientSpeed
-			&& source_id != EventSource::gradientOffset
+			&& source_id != EventSource::gradientSpeedSliding
+			&& source_id != EventSource::gradientOffsetSliding
 			&& modified
 		) {
 			string historyText = ([=, &P]() -> string
@@ -2441,7 +2457,9 @@ Fractalforums thread: https://fractalforums.org/other/55/explore-fractals-inflec
 	}
 
 	void bitmapRenderStarted(void* canvas, uint bitmapRenderID) {
+		if(debug) cout << "GUI bitmapRenderStarted" << endl;
 		SendMessage(getHwnd(), Message::BITMAP_RENDER_STARTED, reinterpret_cast<WPARAM>(canvas), reinterpret_cast<LPARAM>(&bitmapRenderID));
+		if(debug) cout << "GUI bitmapRenderStarted done" << endl;
 	}
 
 	void bitmapRenderFinished(void* canvas, uint bitmapRenderID) {
@@ -2470,7 +2488,7 @@ Fractalforums thread: https://fractalforums.org/other/55/explore-fractals-inflec
 	}
 
 	void fit_to_fractal() {
-		FractalCanvas* canvas = activeCanvas();
+		FractalCanvas* canvas = activeCanvas;
 		if (canvas != nullptr) {
 			assert(tabs.containsCanvas(canvas));
 
@@ -2492,7 +2510,7 @@ Fractalforums thread: https://fractalforums.org/other/55/explore-fractals-inflec
 	}
 
 	void fit_to_window() {
-		FractalCanvas* canvas = activeCanvas();
+		FractalCanvas* canvas = activeCanvas;
 		if (canvas != nullptr) {
 			assert(tabs.containsCanvas(canvas));
 
@@ -2509,7 +2527,7 @@ Fractalforums thread: https://fractalforums.org/other/55/explore-fractals-inflec
 	}
 
 	void saveParametersAs() {
-		FractalCanvas* canvas = activeCanvas();
+		FractalCanvas* canvas = activeCanvas;
 		if (canvas != nullptr) {
 			string path = getDate() + " " + canvas->P().get_procedure().name();
 
@@ -2575,19 +2593,17 @@ Fractalforums thread: https://fractalforums.org/other/55/explore-fractals-inflec
 	}
 
 	void saveParameters() {
-		FractalCanvas* canvas = activeCanvas();
-		if (canvas != nullptr) {
-			saveParameters(canvas);
+		if (activeCanvas != nullptr) {
+			saveParameters(activeCanvas);
 		}
 	}
 
 	void saveBothAs() {
-		FractalCanvas* canvas = activeCanvas();
-		if (canvas != nullptr) {
-			string path = getDate() + " " + canvas->P().get_procedure().name();
+		if (activeCanvas != nullptr) {
+			string path = getDate() + " " + activeCanvas->P().get_procedure().name();
 			if (BrowseFile(getHwnd(), FALSE, "Save parameters and image", "Parameters\0*.efp\0\0", path)) {
-				saveParameters(canvas, path);
-				saveImage(canvas, path + ".png");
+				saveParameters(activeCanvas, path);
+				saveImage(activeCanvas, path + ".png");
 			}
 		}
 	}
@@ -2928,6 +2944,11 @@ int GUI_main(FractalParameters& defaultParameters, uint number_of_threads, Fract
 					}
 					return false;
 				}
+				//todo: remove test
+				case 'Q' : {
+					showMorphing = ! showMorphing;
+					return false;
+				}
 				default : {
 					return true;
 				}
@@ -3010,7 +3031,7 @@ int GUI_main(FractalParameters& defaultParameters, uint number_of_threads, Fract
 	{
 		if(debug) cout << "Message PARAMETERS_CHANGED" << endl;
 		FractalCanvas* canvas = reinterpret_cast<FractalCanvas*>(wParam);
-		int source_id = (int)(int64)lParam;
+		int source_id = int(int64(lParam));
 
 		if (fm.tabs.containsCanvas(canvas)) {
 			fm.parametersChangedAction(canvas, source_id);
@@ -3086,7 +3107,7 @@ int GUI_main(FractalParameters& defaultParameters, uint number_of_threads, Fract
 	sc.make_before(Message::CLEANUP_CHILD_WINDOW, [&fm](UINT, WPARAM wParam, LPARAM, LRESULT*)
 	{
 		if(debug) cout << "Message CLEANUP_CHILD_WINDOW" << endl;
-		main_form::child_window_base* child = reinterpret_cast<main_form::child_window_base*>(wParam);
+		child_window_base* child = reinterpret_cast<child_window_base*>(wParam);
 
 		int indexof = -1;
 		for (int i=0; i<fm.childWindows.size(); i++) {

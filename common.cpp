@@ -50,11 +50,14 @@ typedef int32_t int32;
 typedef int64_t int64;
 typedef unsigned int uint;
 
-
 // double_c type definition
 
 typedef std::complex<double> double_c;
 constexpr double_c I(0, 1);
+
+bool isfinite(double_c c) {
+	return isfinite(real(c)) && isfinite(imag(c));
+}
 
 string to_string(double_c c, std::streamsize precision = 5, bool fixed_ = true) {
 	stringstream ss;
@@ -63,17 +66,15 @@ string to_string(double_c c, std::streamsize precision = 5, bool fixed_ = true) 
 	return ss.str();
 }
 
-bool isfinite(double_c c) {
-	return isfinite(real(c)) && isfinite(imag(c));
-}
-
 
 //Constants
 
-constexpr double PROGRAM_VERSION = 10.0;
+constexpr double PROGRAM_VERSION = 10.1;
 constexpr uint NUMBER_OF_TRANSFORMATIONS = 7 + 1;
+//todo: remove if the old mariani silver algortihm is not used anymore
 constexpr uint MAXIMUM_TILE_SIZE = 50; //tiles in renderSilverRect smaller than this do not get subdivided.
 constexpr uint NEW_TILE_THREAD_MIN_PIXELS = 8; //For tiles with a width or height in PIXELS smaller than this no new threads are created, which has two reasons: 1. thread overhead; 2. See the explanation of stop_creating_threads in the function Render::renderSilverRect.
+constexpr uint WORK_STORAGE_SIZE = 256; // how much work (points to calculate) worker threads receive from the work distribution function (used in the Render class)
 constexpr double pi = 3.1415926535897932384626433832795;
 
 
@@ -87,17 +88,15 @@ mutex drawingBitmap;
 
 //Procedures definition
 
-namespace ProcedureKind {
-	enum {
-		Mandelbrot
-		,Other
-	};
-}
+namespace ProcedureKind { enum {
+	Mandelbrot
+	,Other
+};}
 
 struct Procedure {
 	/*
 		from https://stackoverflow.com/a/37876799
-		This struct is a string-like type that can be declared as a constexpr. This is needed to be able to declare a Formula, which contains a name, as constexpr. I want to do that because procedure properties are constant values known at compile time.
+		This struct is a string-like type that can be declared as a constexpr. This is needed to be able to declare a Formula, which contains a name, as constexpr. I want to do that because procedure properties are constant values known at compile time and I use them as template parameters.
 		C++20 will allow string to be declared as constexpr, so this trick can be removed when C++20 has good compiler support.
 	*/
 	struct constexpr_str {
@@ -150,6 +149,7 @@ constexpr Procedure HIGH_POWER =        { 13, true,     33554432,   "High power 
 constexpr Procedure RECURSIVE_FRACTAL = { 15, true,     2,          "Recursive Fractal",    false,     false,     ProcedureKind::Other };
 constexpr Procedure PURE_MORPHINGS =    { 17, true,     2,          "Pure Julia morphings", false,     false,     ProcedureKind::Other };
 constexpr Procedure M512 =              { 18, true,     512,        "Mandelbrot power 512", true,      false,     ProcedureKind::Mandelbrot };
+constexpr Procedure DEBUG_TEST          { 19, false,		2,			"debug test",			false,     false,	  ProcedureKind::Other };
 
 constexpr Procedure getProcedureObject(int id) {
 	switch (id) {
@@ -164,6 +164,7 @@ constexpr Procedure getProcedureObject(int id) {
 		case RECURSIVE_FRACTAL.id: return RECURSIVE_FRACTAL;
 		case PURE_MORPHINGS.id:    return PURE_MORPHINGS;
 		case M512.id:              return M512;
+		case DEBUG_TEST.id:        return DEBUG_TEST; //todo: remove
 	}
 	return NOT_FOUND;
 }
@@ -185,36 +186,17 @@ string transformation_name(int transformation_id)
 
 
 // ARGB color type definition
+//The order in the struct is inverted because an ARGB value in a windows API bitmap is interpreted as a little endian integer.
+struct ARGB {
+	uint8 B;
+	uint8 G;
+	uint8 R;
+	uint8 A;
+};
 
-typedef uint32_t ARGB;
-
-inline ARGB rgb(uint8 r, uint8 g, uint8 b) {
-	return ((uint)(((uint8)(b)|((uint16)((uint8)(g))<<8))|(((uint)(uint8)(r))<<16)));
+inline constexpr ARGB rgb(uint8 r, uint8 g, uint8 b) {
+	return {b, g, r, 255};
 }
-
-inline uint8 getRValue(ARGB argb) {
-	return ((uint8)(((uint64)((argb)>>16)) & 0xff));
-}
-
-inline uint8 getGValue(ARGB argb) {
-	return ((uint8)(((uint64)(((uint16)(argb)) >> 8)) & 0xff));
-}
-
-inline uint8 getBValue(ARGB argb) {
-	return ((uint8)(((uint64)(argb)) & 0xff));
-}
-
-inline ARGB rgbColorAverage(ARGB c1, ARGB c2, double ratio) {
-	//dontdo: I had to disable these asserts because they can fail when the parameters are changed during a render, which is fine. However, I'm not sure if it's good design to allow that. Most importantly I want speed. The program should not hang for a long time waiting for renders to cancel.
-	//assert(ratio >= 0);
-	//assert(ratio <= 1);
-	return rgb(
-		(uint8)((getRValue(c1))*(1 - ratio) + (getRValue(c2))*ratio) | 1,
-		(uint8)((getGValue(c1))*(1 - ratio) + (getGValue(c2))*ratio) | 1,
-		(uint8)((getBValue(c1))*(1 - ratio) + (getBValue(c2))*ratio) | 1
-	);
-}
-
 
 /*
 This class is used in FractalCanvas to avoid depending on the windows api to resize the bitmap. Instead, it depends on BitmapManager. Because any derivation of BitmapManager can be used, that makes FractalCanvas compatible with any bitmap that has a pointer to 4-byte RGBA-values (represented by a uint here).
@@ -275,5 +257,18 @@ public:
 
 	virtual ~GUIInterface() {}
 };
+
+//a location in a FractalCanvas
+struct point {
+	uint x;
+	uint y;
+};
+
+//macro to easily time pieces of code
+#define timerstart { auto start = chrono::high_resolution_clock::now();
+#define timerend(name) \
+	auto end = chrono::high_resolution_clock::now(); \
+	chrono::duration<double> elapsed = end - start; \
+	cout << #name << " took " << elapsed.count() << " seconds" << endl; }
 
 #endif

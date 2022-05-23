@@ -20,9 +20,11 @@
 #define FRACTALCANVAS_H
 
 //standard library
-#include <iostream>
 #include <algorithm>
 #include <functional>
+
+//lodepng
+#include "lodepng/lodepng.cpp"
 
 //this program
 #include "common.cpp"
@@ -30,48 +32,28 @@
 
 constexpr uint64 MAXIMUM_BITMAP_SIZE = 2147483648; // 2^31
 
-/*
-	This class uses one integer as as data container to store multiple properties of a calculated point as follows:
-	first 30 bits: iterationcount (integer)
-	31st bit: inMinibrot (boolean)
-	32nd bit: guessed (boolean)
-
-	The reason for this construction is that storing those values normally uses two times as much memory. The corresponding struct would be:
-
-	struct IterData {
-		uint iterationCount; //4 bytes
-		bool inMinibrot; //1 byte
-		bool guessed; //1 byte
-	};
-
-	A bool uses 1 byte of memory (8 times as much as strictly needed). Together that's 6 bytes for the struct, but the compiler rounds that to a multiple of 4, making the struct cost 8 bytes.
-
-	So by using 2 bits of the data to store the boolean values, memory usage is reduced by half at the cost of 2 bits of precision for the iterationcount, which means the maximum value of the iterationcount is 2^30 = 1,073,741,824.
-
-	The iterationcount limit can be easily raised to 2^62 by using a uint64 instead of a uint, giving a much higher limit than the struct above while using the same amount of memory.
-*/
+// dontdo: make this a template? to allow larger iterationcounts, and therefore increased memory, but only when necessary
 class IterData {
-	uint data;
 public:
-	IterData(uint iterationCount, bool guessed, bool inMinibrot) {
-		data = iterationCount << 2;
-		if (guessed)
-			data = data | 0b1;
-		if (inMinibrot) {
-			data = data | 0b10;
-		}
-	}
-	inline uint iterationCount() {
-		return data >> 2;
-	}
-	inline bool guessed() {
-		return data & 0b1;
-	}
-	inline bool inMinibrot() {
-		return data & 0b10;
-	}
+	uint iterationCount : 30;
+	bool guessed : 1;
+	bool inMinibrot : 1;
 };
 
+inline ARGB gradient(int iterationCount, const vector<ARGB>& gradientColors, uint number_of_colors, float offset_term, float speed_factor)
+{
+	float gradientPosition = (iterationCount + offset_term) * speed_factor;
+	uint asInt = (uint)gradientPosition;
+	ARGB c1 = gradientColors[asInt % number_of_colors];
+	ARGB c2 = gradientColors[(asInt + 1) % number_of_colors];
+	float ratio = gradientPosition - asInt;
+	return rgb(
+		uint8(c1.R*(1 - ratio) + c2.R*ratio) | 1,
+		uint8(c1.G*(1 - ratio) + c2.G*ratio) | 1,
+		uint8(c1.B*(1 - ratio) + c2.B*ratio) | 1
+	);
+	//The returned expression used to be a function but manual inlining turns out to be faster.
+}
 
 class FractalCanvas {
 public:
@@ -154,6 +136,11 @@ public:
 		if(debug) cout << "canvas parameters changed with dimensions " << mP.width_canvas() << "x" << mP.height_canvas() << endl;
 	}
 
+	FractalCanvas(const FractalCanvas& other) = delete;
+	FractalCanvas& operator=(const FractalCanvas& other) = delete;
+
+	//todo: consider changing this. The destructor waits for all threads using the FractalCanvas to end. This includes threads created by the FractalCanvas member functions, which I think is good. The FractalCanvas creates them, and so it's responsible for them. But it also includes threads created by the GUI. The GUI should be responsible for ending those threads before destroying a FractalCanvas.
+	//Maybe it's also better to use unique_ptr instead of a normal pointer for iters (not important because it already works).
 	~FractalCanvas() {
 		if(debug) cout << "deleting FractalCanvas " << this << endl;
 
@@ -166,45 +153,59 @@ public:
 	inline void* voidPtr() { return reinterpret_cast<void*>(this); }
 
 	void parametersChangedEvent(int source_id = 0) {
+		if(debug) cout << this << " parametersChangedEvent" << endl;
 		for (GUIInterface* gui : GUIs) {
 			gui->parametersChanged(voidPtr(), source_id);
 		}
+		if(debug) cout << this << " parametersChangedEvent done" << endl;
 	}
 
 	void sizeChangedEvent() {
+		if(debug) cout << this << " sizeChangedEvent" << endl;
 		for (GUIInterface* gui : GUIs) {
 			gui->canvasSizeChanged(voidPtr());
 		}
+		if(debug) cout << this << " sizeChangedEvent done" << endl;
 	}
 
 	void canvasResizeFailedEvent(ResizeResult result) {
+		if(debug) cout << this << " canvasResizeFailedEvent" << endl;
 		for (GUIInterface* gui : GUIs) {
 			gui->canvasResizeFailed(voidPtr(), result);
 		}
+		if(debug) cout << this << " canvasResizeFailedEvent done" << endl;
 	}
 
 	void renderStartedEvent(shared_ptr<RenderInterface> render, int renderID) {
+		if(debug) cout << this << " renderStartedEvent" << endl;
 		for (GUIInterface* gui : GUIs) {
 			gui->renderStarted(move(render));
 		}
+		if(debug) cout << this << " renderStartedEvent done" << endl;
 	}
 
 	void renderFinishedEvent(shared_ptr<RenderInterface> render, int renderID) {
+		if(debug) cout << this << " renderFinishedEvent" << endl;
 		for (GUIInterface* gui : GUIs) {
 			gui->renderFinished(move(render));
 		}
+		if(debug) cout << this << " renderFinishedEvent done" << endl;
 	}
 
 	void bitmapRenderStartedEvent(int bitmapRenderID) {
+		if(debug) cout << this << " bitmapRenderStartedEvent" << endl;
 		for (GUIInterface* gui : GUIs) {
 			gui->bitmapRenderStarted(voidPtr(), bitmapRenderID);
 		}
+		if(debug) cout << this << " bitmapRenderStartedEvent done" << endl;
 	}
 
 	void bitmapRenderFinishedEvent(int bitmapRenderID) {
+		if(debug) cout << this << " bitmapRenderFinishedEvent" << endl;
 		for (GUIInterface* gui : GUIs) {
 			gui->bitmapRenderFinished(voidPtr(), bitmapRenderID);
 		}
+		if(debug) cout << this << " bitmapRenderFinishedEvent done" << endl;
 	}
 
 	void cancelRender() {
@@ -217,19 +218,6 @@ public:
 
 	void cancelBitmapRender() {
 		++lastBitmapRenderID;
-	}
-
-	inline ARGB gradient(int iterationCount) {
-		const vector<ARGB>& gradientColors = mP.get_gradientColors();
-
-		uint number_of_colors = gradientColors.size();
-		double gradientPosition = (iterationCount + mP.get_gradientOffsetTerm()) * mP.get_gradientSpeedFactor();
-		uint asInt = (uint)gradientPosition;
-		ARGB previousColor = gradientColors[asInt % number_of_colors];
-		ARGB nextColor = gradientColors[(asInt + 1) % number_of_colors];
-		double ratio = gradientPosition - asInt;
-
-		return rgbColorAverage(previousColor, nextColor, ratio);
 	}
 
 	ResizeResult resize(uint newOversampling, uint new_target_width, uint new_target_height, uint newBitmapZoom) {
@@ -490,7 +478,7 @@ public:
 
 	void addToThreadcount(int amount) {
 		lock_guard<mutex> guard(genericMutex);
-		assert((int64)otherActiveThreads + amount >= 0); //there should not be less than 0 threads
+		assert((int64)otherActiveThreads + amount >= 0); //there should not be fewer than 0 threads
 		otherActiveThreads += amount;
 		if(debug) cout << "FractalCanvas other active threads count changed to " << otherActiveThreads << endl;
 	}
@@ -521,18 +509,19 @@ public:
 		assert(x >= 0); assert(x < mP.width_canvas());
 		assert(y >= 0); assert(y < mP.height_canvas());
 		//returns the index in iters of (x, y) in the fractalcanvas
-		uint height_resolution = mP.height_resolution();
+		uint width_resolution = mP.width_resolution();
 		uint oversampling = mP.get_oversampling();
 		uint samples = oversampling * oversampling;
 		uint dx = x % oversampling;
 		uint dy = y % oversampling;
 		uint _x = x / oversampling;
 		uint _y = y / oversampling;
-		return (_x * height_resolution + _y) * samples + (dy * oversampling) + dx;
+		return (_x + _y * width_resolution) * samples + dy + dx * oversampling;
 	}
+	
 
 	inline uint getIterationcount(uint x, uint y) {
-		return iters[itersIndex_of_itersXY(x,y)].iterationCount();
+		return iters[itersIndex_of_itersXY(x,y)].iterationCount;
 	}
 
 	inline IterData getIterData(uint x, uint y) {
@@ -548,81 +537,173 @@ public:
 		assert(i >= 0 && j >= 0);
 		assert(i < mP.width_canvas() && j < mP.height_canvas());
 
-		IterData result(iterationCount, guessed, isInMinibrot);
+		IterData result{ iterationCount, guessed, isInMinibrot };
 		uint index = itersIndex_of_itersXY(i, j);
 		iters[index] = result;
 	}
 	
-	void renderBitmapRect(bool highlight_guessed, uint xfrom, uint xto, uint yfrom, uint yto, uint bitmapRenderID) {
+	void renderBitmapRect(bool highlight_guessed, uint xfrom, uint xto, uint yfrom, uint yto) {
 		const uint width_resolution = mP.width_resolution();
 		const uint height_resolution = mP.height_resolution();
 		const uint oversampling = mP.get_oversampling();
 		const uint bitmap_zoom = mP.get_bitmap_zoom();
+		const uint samples = oversampling * oversampling;
 
-		uint samples = oversampling * oversampling;
+		const vector<ARGB>& gradientColors = mP.get_gradientColors();
+		const float offset_term = mP.get_gradientOffsetTerm();
+		const float speed_factor =  mP.get_gradientSpeedFactor();
+		const uint number_of_colors = gradientColors.size();
 
 		assert(xfrom >= 0); assert(xfrom <= width_resolution);
 		assert(xto >= xfrom); assert(xto <= width_resolution);
 		assert(yfrom >= 0); assert(yfrom <= height_resolution);
 		assert(yto >= yfrom); assert(yto <= height_resolution);
 
-		if (highlight_guessed) {
-			for (uint px=xfrom; px<xto; px++) {
-				for (uint py=yfrom; py<yto; py++) {
+		if (highlight_guessed == false) {
+			//0.55
+			if (bitmap_zoom == 1 && samples == 1) {
+				for (uint py=yfrom; py<yto; py++)
+				{
+					ptrdiff_t pixelIndex_col = py * width_resolution;
 
-					uint itersStartIndex = (px * height_resolution + py) * samples;
+					for (int px=xfrom; px<xto; px++)
+					{
+						ARGB color;
+						IterData it = iters[pixelIndex_col + px];
+						if (it.inMinibrot)
+							color = rgb(0, 0, 0);
+						else
+							color = gradient(it.iterationCount, gradientColors, number_of_colors, offset_term, speed_factor);
 
-					uint sumR=0, sumG=0, sumB=0;
-					ARGB color;
-
-					for (uint i=0; i<samples; i++) {
-						IterData it = iters[itersStartIndex + i];
-						if (it.inMinibrot() && !it.guessed()) color = rgb(255, 0, 0);
-						else if (it.inMinibrot())             color = rgb(0, 0, 255);
-						else if (it.guessed())                color = rgb(0, 255, 0);
-						else                                  color = gradient(it.iterationCount());
-						sumR += getRValue(color);
-						sumG += getGValue(color);
-						sumB += getBValue(color);
+						ptPixels[pixelIndex_col + px] = color;
 					}
+				}
+			}
+			else if (bitmap_zoom == 1 && samples > 1)
+			{
+				for (uint py=yfrom; py<yto; py++)
+				{
+					ptrdiff_t pixelIndex_col = py * width_resolution;
 
-					uint pixelIndex = pixelIndex_of_pixelXY(px, py);
-					ARGB new_color = rgb(
-						(uint8)(sumR / samples),
-						(uint8)(sumG / samples),
-						(uint8)(sumB / samples)
-					);
+					for (uint px=xfrom; px<xto; px++)
+					{
+						ptrdiff_t pixelIndex = pixelIndex_col + px;
+						ptrdiff_t itersStartIndex = pixelIndex * samples;
+						
+						int sumR=0, sumG=0, sumB=0;
+						ARGB color;
 
-					for (int i=0; i<bitmap_zoom; i++) {
-						for (int j=0; j<bitmap_zoom; j++) {
-							ptPixels[pixelIndex + i + width_resolution * bitmap_zoom * j] = new_color;
+						for (int i=0; i<samples; i++) {
+							IterData it = iters[itersStartIndex + i];
+							if (it.inMinibrot)
+								color = rgb(0, 0, 0);
+							else
+								color = color = gradient(it.iterationCount, gradientColors, number_of_colors, offset_term, speed_factor);
+							sumR += color.R;
+							sumG += color.G;
+							sumB += color.B;
+						}
+
+						color = rgb(
+							(uint8)(sumR / samples),
+							(uint8)(sumG / samples),
+							(uint8)(sumB / samples)
+						);
+
+						ptPixels[pixelIndex] = color;
+					}
+				}
+			}
+			else if (bitmap_zoom > 1 && samples == 1) {
+				const uint row_width = width_resolution * bitmap_zoom;
+
+				for (uint py=yfrom; py<yto; py++)
+				{
+					ptrdiff_t itersStartIndex = py * width_resolution;
+					ptrdiff_t pixelIndex_col = width_resolution * bitmap_zoom * py;
+
+					for (uint px=xfrom; px<xto; px++)
+					{
+						ARGB color;
+						IterData it = iters[itersStartIndex + px];
+						if (it.inMinibrot)
+							color = rgb(0, 0, 0);
+						else
+							color = gradient(it.iterationCount, gradientColors, number_of_colors, offset_term, speed_factor);
+
+						ptrdiff_t pixelIndex = (pixelIndex_col + px) * bitmap_zoom;
+						for (int i=0; i<bitmap_zoom; i++) {
+							for (int j=0; j<bitmap_zoom; j++) {
+								ptPixels[pixelIndex + i + row_width * j] = color;
+							}
 						}
 					}
 				}
-				if (lastBitmapRenderID != bitmapRenderID) {
-					if (debug) cout << "cancelling bitmap render " << bitmapRenderID << endl;
-					return;
+			}
+			else {
+				assert(bitmap_zoom > 1 && samples > 1);
+				//This case is unlikely because it cannot be reached through the user interface, but by loading JSON parameters it can be reached. With the GUI, only oversampling OR bitmap_zoom can be set, not both.
+				const uint row_width = width_resolution * bitmap_zoom;
+
+				for (uint py=yfrom; py<yto; py++)
+				{
+					for (uint px=xfrom; px<xto; px++)
+					{
+						uint itersStartIndex = (px + py * width_resolution) * samples;
+
+						uint sumR=0, sumG=0, sumB=0;
+						ARGB color;
+		
+						for (uint i=0; i<samples; i++) {
+							IterData it = iters[itersStartIndex + i];
+							if (it.inMinibrot)			      color = rgb(0, 0, 0);
+							else                              color = gradient(it.iterationCount, gradientColors, number_of_colors, offset_term, speed_factor);
+							sumR += color.R;
+							sumG += color.G;
+							sumB += color.B;
+						}
+
+						uint pixelIndex = pixelIndex_of_pixelXY(px, py);
+						ARGB new_color = rgb(
+							(uint8)(sumR / samples),
+							(uint8)(sumG / samples),
+							(uint8)(sumB / samples)
+						);
+
+						for (int i=0; i<bitmap_zoom; i++) {
+							for (int j=0; j<bitmap_zoom; j++) {
+								ptPixels[pixelIndex + i + row_width * j] = new_color;
+							}
+						}
+					}
 				}
 			}
 		}
 		else {
-			for (uint px=xfrom; px<xto; px++) {
-				for (uint py=yfrom; py<yto; py++) {
+			//highlight_guessed is true
+			const uint row_width = width_resolution * bitmap_zoom;
 
-					uint itersStartIndex = (px * height_resolution + py) * samples;
+			for (uint py=yfrom; py<yto; py++)
+			{
+				for (uint px=xfrom; px<xto; px++)
+				{
+					uint itersStartIndex = (px + py * width_resolution) * samples;
 
 					uint sumR=0, sumG=0, sumB=0;
 					ARGB color;
-					
+		
 					for (uint i=0; i<samples; i++) {
 						IterData it = iters[itersStartIndex + i];
-						if (it.inMinibrot())			      color = rgb(0, 0, 0);
-						else                              color = gradient(it.iterationCount());
-						sumR += getRValue(color);
-						sumG += getGValue(color);
-						sumB += getBValue(color);
+						if (it.inMinibrot && !it.guessed) color = rgb(255, 0, 0);
+						else if (it.inMinibrot)           color = rgb(0, 0, 255);
+						else if (it.guessed)              color = rgb(0, 255, 0);
+						else
+							color = gradient(it.iterationCount, gradientColors, number_of_colors, offset_term, speed_factor);
+						sumR += color.R;
+						sumG += color.G;
+						sumB += color.B;
 					}
-				
+
 					uint pixelIndex = pixelIndex_of_pixelXY(px, py);
 					ARGB new_color = rgb(
 						(uint8)(sumR / samples),
@@ -632,19 +713,15 @@ public:
 
 					for (int i=0; i<bitmap_zoom; i++) {
 						for (int j=0; j<bitmap_zoom; j++) {
-							ptPixels[pixelIndex + i + width_resolution * bitmap_zoom * j] = new_color;
+							ptPixels[pixelIndex + i + row_width * j] = new_color;
 						}
 					}
-				}
-				if (lastBitmapRenderID != bitmapRenderID) {
-					if (debug) cout << "Bitmap render " << bitmapRenderID << " cancelled; terminating thread" << endl;
-					return;
 				}
 			}
 		}
 	}
 
-	void renderBitmapFull(bool highlight_guessed, bool multithreading, uint bitmapRenderID) {
+	void renderBitmapFull(bool highlight_guessed, bool multithreading) {
 		uint screenWidth = mP.width_resolution();
 		uint screenHeight = mP.height_resolution();
 
@@ -672,7 +749,7 @@ public:
 					if (j == tiles - 1)	yto = screenHeight;	//the last tile
 					else					yto = (j+1) * heightStep;
 
-					tileThreads[createdThreads++] = thread(&FractalCanvas::renderBitmapRect, this, highlight_guessed, xfrom, xto, yfrom, yto, bitmapRenderID);
+					tileThreads[createdThreads++] = thread(&FractalCanvas::renderBitmapRect, this, highlight_guessed, xfrom, xto, yfrom, yto);
 				}
 			}
 
@@ -681,36 +758,31 @@ public:
 		}
 		else {
 			if(debug) cout << "using 1 thread for renderBitmapFull" << endl;
-			renderBitmapRect(highlight_guessed, 0, screenWidth, 0, screenHeight, bitmapRenderID);
+			renderBitmapRect(highlight_guessed, 0, screenWidth, 0, screenHeight);
 		}	
 	}
 
 
+	template <int procedure_identifier>
+	void procedureRenderCase(uint renderID)
+	{
+		constexpr Procedure procedure = getProcedureObject(procedure_identifier);
+		if (using_avx) {
+			if (mP.get_julia())
+				createNewRenderTemplated<procedure_identifier, procedure.hasAvxVersion, procedure.hasJuliaVersion>(renderID);
+			else
+				createNewRenderTemplated<procedure_identifier, procedure.hasAvxVersion, false>(renderID);
+		}
+		else {
+			if (mP.get_julia())
+				createNewRenderTemplated<procedure_identifier, false, procedure.hasJuliaVersion>(renderID);
+			else
+				createNewRenderTemplated<procedure_identifier, false, false>(renderID);
+		}
+	};
 
 	void createNewRender(uint renderID)
 	{
-		/*
-			This macro generates calls of createNewRenderTemplated for every possible combination of julia and using_avx.
-			There's a check whether the procedure has a julia or avx version before an attempt is made to use it. For example, if S_().get_julia() is true, procedure.hasJuliaVersion determines whether a julia version is actually used. It overrides the setting.
-		*/
-		#define procedureRenderCase(procedure_identifier) \
-			case procedure_identifier: { \
-				constexpr Procedure procedure = getProcedureObject(procedure_identifier); \
-				if (using_avx) { \
-					if (mP.get_julia()) \
-						createNewRenderTemplated<procedure_identifier, procedure.hasAvxVersion, procedure.hasJuliaVersion>(renderID); \
-					else \
-						createNewRenderTemplated<procedure_identifier, procedure.hasAvxVersion, false>(renderID); \
-				} \
-				else { \
-					if (mP.get_julia()) \
-						createNewRenderTemplated<procedure_identifier, false, procedure.hasJuliaVersion>(renderID); \
-					else \
-						createNewRenderTemplated<procedure_identifier, false, false>(renderID); \
-				} \
-				break; \
-			}
-
 		if(debug) {
 			int procedure_identifier = mP.get_procedure_identifier();
 			assert(procedure_identifier == mP.get_procedure().id);
@@ -718,20 +790,20 @@ public:
 		}
 
 		switch (mP.get_procedure_identifier()) {
-			procedureRenderCase(M2.id)
-			procedureRenderCase(M3.id)
-			procedureRenderCase(M4.id)
-			procedureRenderCase(M5.id)
-			procedureRenderCase(M512.id)
-			procedureRenderCase(BURNING_SHIP.id)
-			procedureRenderCase(CHECKERS.id)
-			procedureRenderCase(TRIPLE_MATCHMAKER.id)
-			procedureRenderCase(HIGH_POWER.id)
-			procedureRenderCase(RECURSIVE_FRACTAL.id)
-			procedureRenderCase(PURE_MORPHINGS.id)
+			case M2.id:                return procedureRenderCase<M2.id>(renderID);
+			case M3.id:                return procedureRenderCase<M3.id>(renderID);
+			case M4.id:                return procedureRenderCase<M4.id>(renderID);
+			case M5.id:                return procedureRenderCase<M5.id>(renderID);
+			case M512.id:              return procedureRenderCase<M512.id>(renderID);
+			case BURNING_SHIP.id:      return procedureRenderCase<BURNING_SHIP.id>(renderID);
+			case CHECKERS.id:          return procedureRenderCase<CHECKERS.id>(renderID);
+			case TRIPLE_MATCHMAKER.id: return procedureRenderCase<TRIPLE_MATCHMAKER.id>(renderID);
+			case HIGH_POWER.id:        return procedureRenderCase<HIGH_POWER.id>(renderID);
+			case RECURSIVE_FRACTAL.id: return procedureRenderCase<RECURSIVE_FRACTAL.id>(renderID);
+			case PURE_MORPHINGS.id:    return procedureRenderCase<PURE_MORPHINGS.id>(renderID);
+			case DEBUG_TEST.id:        return procedureRenderCase<DEBUG_TEST.id>(renderID);
 		}
-
-		#undef procedureRenderCase
+		assert(false);
 	}
 
 	void createNewRender() {
@@ -794,7 +866,7 @@ public:
 	void createNewBitmapRender(bool highlight_guessed, uint bitmapRenderID)
 	{
 		bitmapRenderStartedEvent(bitmapRenderID);
-		renderBitmapFull(highlight_guessed, true, bitmapRenderID);
+		renderBitmapFull(highlight_guessed, true);
 		bitmapRenderFinishedEvent(bitmapRenderID);
 	}
 
@@ -807,7 +879,9 @@ public:
 		auto action = [this, highlight_guessed](uint bitmapRenderID)
 		{
 			{
+				if(debug) cout << this_thread::get_id() << " is waiting for lock activeBitmapRender" << endl;
 				lock_guard<mutex> guard(activeBitmapRender);
+				if(debug) cout << this_thread::get_id() << " has lock activeBitmapRender" << endl;
 				//if here, it's this thread's turn
 				{
 					lock_guard<mutex> guard(genericMutex);
@@ -831,6 +905,7 @@ public:
 					bitmapRenderQueueSize--;
 				}
 			}
+			if(debug) cout << this_thread::get_id() << " released lock activeBitmapRender" << endl;
 			//After releasing the lock on activeBitmapRender, nothing should be done that uses the FractalCanvas. When the user closes a tab during a bitmap render, the FractalCanvas gets destroyed immediately after the lock is released.
 		};
 
@@ -849,8 +924,103 @@ public:
 		else
 			action(bitmapRenderID);
 	}
-	
 };
+
+void saveImage(FractalCanvas* canvas, string filename, bool cleanup = true) {
+	uint width_resolution = canvas->P().width_resolution();
+	uint height_resolution = canvas->P().height_resolution();
+	uint bitmap_zoom = canvas->P().get_bitmap_zoom();
+
+	/*
+		These loops performs conversion.
+
+		PNG requires RGBA-values in big-endian order. The colors in this program are ARGB stored in little-endian order. Lodepng interprets the data correctly when delivered as ABGR (the reserve order of RGBA) because of the endianness difference. This comes down to swapping red and blue.
+		 
+		 I convert the colors to ABGR in the original array to reduce memory usage. That means that after saving the PNG, the colors may need to be reverted to their original values.
+	*/
+	if (bitmap_zoom > 1)
+	{
+		//I don't want to save the zoomed bitmap. This loop uses the existing array (which is large enough) to create an unzoomed bitmap.
+		//todo
+		/*
+		for (uint y=0; y< height_resolution; y++) {
+			for (uint x=0; x< width_resolution; x++)
+			{
+				uint pixelIndex = canvas->pixelIndex_of_pixelXY(x, y);
+				const ARGB pixel = canvas->ptPixels[pixelIndex];
+				
+				ARGB r,g,b;
+				r = (pixel & 0x00ff0000);
+				g = (pixel & 0x0000ff00);
+				b = (pixel & 0x000000ff);
+
+				canvas->ptPixels[width_resolution * y + x] = (
+					0xff000000 //always use full opacity (no transparency)
+					| r >> 16
+					| g
+					| b << 16
+				);
+			}
+		}
+		*/
+	}
+	else
+	{
+		for (uint y=0; y< height_resolution; y++) {
+			for (uint x=0; x< width_resolution; x++)
+			{
+				uint pixelIndex = canvas->pixelIndex_of_pixelXY(x, y);
+				ARGB& pixel = canvas->ptPixels[pixelIndex];
+				
+				/*ARGB r,g,b;
+				r = (pixel & 0x00ff0000);
+				g = (pixel & 0x0000ff00);
+				b = (pixel & 0x000000ff);
+
+				pixel = (
+					0xff000000 //always use full opacity (no transparency)
+					| r >> 16
+					| g
+					| b << 16
+				);
+				*/
+
+				//pixel = rgb(pixel.
+				pixel = rgb(pixel.B, pixel.G, pixel.R);
+			}
+		}
+	}
+
+	
+	uint8* out;
+	size_t outsize;
+	uint errorcode = lodepng_encode32(
+		&out, &outsize				//will contain the PNG data
+		,(uint8*)canvas->ptPixels	//image data to encode
+		, width_resolution, height_resolution	//width and height
+	);
+	if (errorcode != 0) {
+		cout << "error " << errorcode << " occurred while encoding PNG" << endl;
+		assert(false);
+	}
+	else {
+		ofstream outfile;
+		outfile.open(filename, ios::binary);
+		if (outfile.is_open()) {
+			outfile.write((char*)out, outsize);
+			outfile.close();
+		}
+		else {
+			cout << "error while opening file " << filename << endl;
+			assert(false);
+		}
+	}
+	free(out);
+
+	if (cleanup) {
+		canvas->createNewBitmapRender(false);
+	}
+}
 
 
 #endif

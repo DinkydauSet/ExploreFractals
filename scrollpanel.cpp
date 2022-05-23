@@ -60,6 +60,11 @@ using namespace nana;
 template <typename ContentPanel>
 class ScrollPanel
 {
+	static_assert(
+		is_base_of<panel<true>, ContentPanel>::value
+		|| is_base_of<panel<false>, ContentPanel>::value
+	, "ContentPanel must be a nana::panel");
+
 public:
 	class VisiblePart : public panel<false>
 	{ public:
@@ -76,15 +81,12 @@ public:
 	VisiblePart visible;
 	ContentPanel content;
 
+	//todo: can the content be set via the constructor by making it a unique_ptr ? Right now the content can't be initialized properly because it's impossible to pass arguments for the constructor of the content to the ScrollPanel constructor. This restricts the use of ScrollPanel to ContentPanel types that don't need constructor arguments.
+	//I'm not sure what's the best way to do this. If ScrollPanel calls the content's constructor, it must have all arguments, so the ScrollPanel constructor must accept all those arguments somehow, but what those arguments are depends on the type of ContentPanel. This problem is avoided if the ScrollPanel constructor requires a pointer to an already constructed ContentPanel.
 	ScrollPanel(window wd)
 	: visible(wd)
 	, content(visible)
 	{
-		static_assert(
-			is_base_of<panel<true>, ContentPanel>::value
-			|| is_base_of<panel<false>, ContentPanel>::value
-		, "ContentPanel must be a nana::panel");
-
 		scroll<true>& scroll = visible.vscrollbar;
 		scroll.step(40);
 
