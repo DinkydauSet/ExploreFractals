@@ -22,7 +22,6 @@
 //standard library
 #include <unordered_map>
 #include <stdexcept>
-#include <algorithm>
 
 //Nana (GUI library)
 #include <nana/gui.hpp>
@@ -117,22 +116,22 @@ namespace EventSource {
 // A range of numbers starting with WM_APP is reserved for custom messages, so they will never conflict with codes used by microsoft.
 //
 namespace Message {
-	//message												wParam meaning			lParam meaning
+	//message                                               wParam meaning          lParam meaning
 	
 	//Messages related to the GUIInterface functions:
-	constexpr uint RENDER_STARTED =				WM_APP + 1;	//RenderInterface*
-	constexpr uint RENDER_FINISHED =				WM_APP + 2;	//RenderInterface*
-	constexpr uint BITMAP_RENDER_STARTED =		WM_APP + 3;	//FractalCanvas*			uint* (bitmapRenderID)
-	constexpr uint BITMAP_RENDER_FINISHED =		WM_APP + 4;	//FractalCanvas*	
-	constexpr uint PARAMETERS_CHANGED =			WM_APP + 5;	//FractalCanvas*			int* (event source id)
-	constexpr uint CANVAS_SIZE_CHANGED =			WM_APP + 6;	//FractalCanvas*
-	constexpr uint CANVAS_RESIZE_FAILED =		WM_APP + 7; //FractalCanvas*
+	constexpr uint RENDER_STARTED =             WM_APP + 1;	//RenderInterface*
+	constexpr uint RENDER_FINISHED =            WM_APP + 2;	//RenderInterface*
+	constexpr uint BITMAP_RENDER_STARTED =      WM_APP + 3;	//FractalCanvas*	        uint* (bitmapRenderID)
+	constexpr uint BITMAP_RENDER_FINISHED =     WM_APP + 4;	//FractalCanvas*	
+	constexpr uint PARAMETERS_CHANGED =         WM_APP + 5;	//FractalCanvas*	        int* (event source id)
+	constexpr uint CANVAS_SIZE_CHANGED =        WM_APP + 6;	//FractalCanvas*
+	constexpr uint CANVAS_RESIZE_FAILED =       WM_APP + 7; //FractalCanvas*
 
 	//other messages
-	constexpr uint SHOW_PROGRESS_UNFINISHED =	WM_APP + 8;	//RenderInterface*
-	constexpr uint DRAW_BITMAP =					WM_APP + 9;	//FractalCanvas*
-	constexpr uint CLEANUP_FRACTAL_TAB =			WM_APP + 10;	//FractalCanvas*
-	constexpr uint CLEANUP_CHILD_WINDOW =		WM_APP + 11;//child_window_base*
+	constexpr uint SHOW_PROGRESS_UNFINISHED =   WM_APP + 8;	//RenderInterface*
+	constexpr uint DRAW_BITMAP =                WM_APP + 9;	//FractalCanvas*
+	constexpr uint CLEANUP_FRACTAL_TAB =        WM_APP + 10;	//FractalCanvas*
+	constexpr uint CLEANUP_CHILD_WINDOW =       WM_APP + 11;//child_window_base*
 }
 
 /*
@@ -569,19 +568,19 @@ public:
 			return ss.str();
 		};
 
-		refreshProcedureSelection(			P.get_procedure().id								);
-		refreshPostTransformationSelection( P.get_post_transformation_type()					);
-		maxIters.caption(					to_string(P.get_maxIters())						);
-		inflectionZoomLevel.caption(			format_double(P.get_inflectionZoomLevel(), 6)	);
-		gradientSpeed.caption(				format_double(P.get_gradientSpeed(), 10)			);
-		gradientOffset.caption(				format_double(P.get_gradientOffset(), 10)		);
-		zoomLevel.caption(					format_double(P.get_zoomLevel(), 10)				);
-		rotation.caption(					format_double(P.get_rotation_angle(), 6)			);
-		centerRe.caption(					format_double(real(P.get_center()))				);
-		centerIm.caption(					format_double(imag(P.get_center()))				);
-		julia.check(							P.get_julia()									);
-		juliaRe.caption(						format_double(real(P.get_juliaSeed()))			);
-		juliaIm.caption(						format_double(imag(P.get_juliaSeed()))			);
+		refreshProcedureSelection(          P.get_procedure().id                            );
+		refreshPostTransformationSelection( P.get_post_transformation_type()                );
+		maxIters.caption(                   to_string(P.get_maxIters())                     );
+		inflectionZoomLevel.caption(        format_double(P.get_inflectionZoomLevel(), 6)   );
+		gradientSpeed.caption(              format_double(P.get_gradientSpeed(), 10)        );
+		gradientOffset.caption(             format_double(P.get_gradientOffset(), 10)       );
+		zoomLevel.caption(                  format_double(P.get_zoomLevel(), 10)            );
+		rotation.caption(                   format_double(P.get_rotation_angle(), 6)        );
+		centerRe.caption(                   format_double(real(P.get_center()))             );
+		centerIm.caption(                   format_double(imag(P.get_center()))             );
+		julia.check(                        P.get_julia()                                   );
+		juliaRe.caption(                    format_double(real(P.get_juliaSeed()))          );
+		juliaIm.caption(                    format_double(imag(P.get_juliaSeed()))          );
 	}
 
 	void parametersFromFields() {
