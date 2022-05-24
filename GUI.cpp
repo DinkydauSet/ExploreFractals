@@ -22,6 +22,7 @@
 //standard library
 #include <unordered_map>
 #include <stdexcept>
+#include <algorithm>
 
 //Nana (GUI library)
 #include <nana/gui.hpp>
@@ -923,7 +924,6 @@ public:
 
 	FractalPanel(window wd, uint number_of_threads, bool show_sidepanel)
 		: EFPanelBase(wd)
-		//, dw(make_shared<drawing>(fractal))
 		, bitmapManager(make_shared<NanaBitmapManager>())
 		, canvas(number_of_threads, static_pointer_cast<BitmapManager>(bitmapManager), {theOnlyNanaGUI})
 		, sidebar(*this, &canvas)
@@ -1591,9 +1591,10 @@ public:
 	//widgets
 	place& pl{ get_place() };
 
-	panel<true> tabpanel{ *this };
+	panel<false> tabpanel{ *this };
 	place tabpanel_pl;
-	drawing tabpanel_dw{ tabpanel };
+	panel<true> viewport{ tabpanel };
+	drawing viewport_dw{ viewport };
 
 	menubar menu_{ *this };
 	EFtabbar tabs;
@@ -1617,7 +1618,6 @@ public:
 	label settingsTriangle{ *this, "▲" };
 	label settingsFiller{ *this, "" }; //label without text, used to center the text "Settings". To the left of the settingsLabel there's the triangle label. By placing another label of the same size to the right the text is centered correctly.
 
-
 	//other data
 	vector<unique_ptr<child_window_base>> childWindows;
 
@@ -1627,7 +1627,8 @@ public:
 	FractalPanel* activeFractalPanel = nullptr;
 
 	//a buffer to generate animation frames in
-	paint::graphics tabpanel_graph;
+	//todo
+	//paint::graphics tabpanel_graph;
 
 
 	main_form(FractalParameters& defaultParameters_, uint number_of_threads_)
@@ -1638,10 +1639,11 @@ public:
 	{
 		tabpanel_pl.bind(tabpanel);
 		tabpanel_pl.div("<x>");
-		
 		bgcolor(colors::black);
-		tabpanel.bgcolor(colors::black);
+		viewport.bgcolor(colors::black);
 		statusbar.bgcolor(colors::black); //this effectively colors only the spacings between the labels because the labels on the statusbar have a color
+
+		viewport.size(nana::size(100, 200));
 
 		//menubar
 		int i = -1;
@@ -1819,8 +1821,9 @@ Fractalforums thread: https://fractalforums.org/other/55/explore-fractals-inflec
 		settingsTriangle.text_align(align::center, align_v::center);
 		settingsFiller.bgcolor(EFcolors::darkblue);
 
-		//This function draws on tabpanel directly. FractalPanels on top of it have no widgets at the location of the viewport, so the FractalPanels are transparent there, which makes it look like the viewport belongs to the tab, but there is only one panel (tabpanel) in use where fractals are drawn. This saves memory compared to having a panel for each tab.
-		tabpanel_dw.draw([this](paint::graphics& graph)
+		//This function draws on the viewport panel directly. FractalPanels on top of it have no widgets at the location of the viewport, so the FractalPanels are transparent there, which makes it look like the viewport belongs to the tab, but there is only one panel (viewport) in use where fractals are drawn. This saves memory compared to having a panel for each tab.
+		//Event handlers are used to keep the position of the viewport consistent with the location of the fractal part of the current tab.
+		viewport_dw.draw([this](paint::graphics& graph)
 		{
 			FractalCanvas* canvas = activeCanvas;
 			if (canvas != nullptr)
@@ -1831,10 +1834,9 @@ Fractalforums thread: https://fractalforums.org/other/55/explore-fractals-inflec
 				uint height = canvas->P().height_bitmap();
 
 				//where to draw
-				//The location to draw is the fractal part, which is the rectangle between the sidebar, sliders and scrollbars.
-				nana::point viewport_pos = activeFractalPanel->fractal.pos();
+				//The location to draw is the rectangle between the sidebar, sliders and scrollbars. Note that the viewport can be larger than the fractal bitmap, in which case not the whole viewport is used. This is handled correctly by bitblt.
 				nana::size viewport_size = activeFractalPanel->fractal.size();
-				rectangle draw_area(viewport_pos, viewport_size);
+				rectangle draw_area(nana::point(0,0), viewport_size);
 
 				//offset by scrollbars
 				int offsetX = activeFractalPanel->offsetX;
@@ -1847,14 +1849,6 @@ Fractalforums thread: https://fractalforums.org/other/55/explore-fractals-inflec
 				graph.bitblt(draw_area, g, nana::point(offsetX, offsetY));
 			}
 		});
-
-		/*
-		tabpanel.events().resizing([this](const arg_resizing& arg)
-		{
-			if(debug) cout << "tabpanel resized to: " << arg.width << ", " << arg.height << endl;
-			tabpanel_graph = paint::graphics(nana::size(arg.width, arg.height));
-		});
-		*/
 
 		//This graphics object is used to measure text width in pixels. It's not a nice solution but it works. What it returns is the size of the text if it were rendered on this graphic, which means that graphic already has to be big enough for the text to fit, otherwise the returned size is too low. I set the width to 1000 pixels because that ought to be enough for every button caption. (I tried a height of 0 but that doesn't work.)
 		paint::graphics measure(nana::size(1000,1));
@@ -1964,7 +1958,8 @@ Fractalforums thread: https://fractalforums.org/other/55/explore-fractals-inflec
 				else										settingsTriangle.caption("▲");
 
 				caption(windowTitle(fractalpanel.get()));
-				tabpanel_dw.update();
+				position_viewport();
+				viewport_dw.update();
 			}
 			else {
 				activeCanvas = nullptr;
@@ -1986,10 +1981,23 @@ Fractalforums thread: https://fractalforums.org/other/55/explore-fractals-inflec
 				activeCanvas = nullptr;
 				activeFractalPanel = nullptr;
 			}
-			tabpanel_dw.update();
+			viewport_dw.update();
 		});
 	}
 
+	void position_viewport()
+	{
+		if (activeFractalPanel != nullptr)
+		{
+			FractalPanel* fp = activeFractalPanel;
+			if (viewport.size() != fp->fractal.size()) {
+				viewport.size(fp->fractal.size());
+			}
+			if (viewport.pos() != fp->fractal.pos()) {
+				viewport.move(fp->fractal.pos());
+			}
+		}
+	}
 
 	//
 	//	Functions for child windows
@@ -2098,7 +2106,8 @@ Fractalforums thread: https://fractalforums.org/other/55/explore-fractals-inflec
 			else						settingsTriangle.caption("▲");
 
 			active_panel->recalculateScrollbars();
-			tabpanel_dw.update();
+			//position_viewport(); //unnecessary because togglePanel changes the fractal panel size which also causes position_viewport to be called (right?)
+			viewport_dw.update();
 		}
 	};
 
@@ -2109,7 +2118,7 @@ Fractalforums thread: https://fractalforums.org/other/55/explore-fractals-inflec
 			return "ExploreFractals";
 	}
 
-	shared_ptr<FractalPanel> create_fractal_tab(const FractalParameters& parameters, string title)
+	shared_ptr<FractalPanel> create_fractal_tab(const FractalParameters& parameters, string title, bool showing_sidepanel = true)
 	{
 		shared_ptr<FractalPanel> fractalpanel = make_shared<FractalPanel>(tabpanel, number_of_threads, true);
 
@@ -2120,6 +2129,7 @@ Fractalforums thread: https://fractalforums.org/other/55/explore-fractals-inflec
 		ResizeResult res = fractalpanel->changeParameters(parameters, EventSource::noEvents);
 		handleResizeResult(*this, res);
 
+		fractalpanel->showSidepanel(showing_sidepanel);
 		fractalpanel->recalculateScrollbars();
 
 		tabs.addFractalPanel(title, fractalpanel); //Doing this step here and not earlier makes sure scrollbars, sliders etc. have been completely rendered to the offscreen buffer before the tab is added, which prevents annoying flickering
@@ -2152,11 +2162,16 @@ Fractalforums thread: https://fractalforums.org/other/55/explore-fractals-inflec
 		//The fractalpanel also registers handlers for these events that update offsetX and offsetY. Those handlers are executed first because they are registered first.
 		fractalpanel->hscrollbar.events().value_changed([this](const arg_scroll& arg)
 		{
-			tabpanel_dw.update();
+			viewport_dw.update();
 		});
 		fractalpanel->vscrollbar.events().value_changed([this](const arg_scroll& arg)
 		{
-			tabpanel_dw.update();
+			viewport_dw.update();
+		});
+
+		fractalpanel->fractal.events().resized([this, fp=fractalpanel.get()](const arg_resized& arg)
+		{
+			position_viewport();
 		});
 
 		fractalpanel->fractal.events().mouse_wheel([this, fp=fractalpanel.get()](const arg_wheel& arg)
@@ -2182,37 +2197,37 @@ Fractalforums thread: https://fractalforums.org/other/55/explore-fractals-inflec
 
 			bool zoomIn = arg.upwards;
 			{
-				//generate preview of the zoomed in fractal
-				API::window_graphics(tabpanel.handle(), tabpanel_graph);
-				paint::graphics& bitmap_graphics = fp->bitmapManager->graph;
-
-				nana::point viewport_pos = fp->fractal.pos();
 			
+				//generate preview of the zoomed in fractal
+				paint::graphics viewport_copy;
+				API::window_graphics(viewport, viewport_copy);
+				paint::graphics& bitmap_graphics = fp->bitmapManager->graph;
+				
 				if (zoomIn) {
 					rectangle fromPart(
-						nana::point(xPos - xPos / 4 - fp->offsetX, yPos - yPos / 4 - fp->offsetY) + viewport_pos
+						nana::point(xPos - xPos / 4 - fp->offsetX, yPos - yPos / 4 - fp->offsetY)
 						,nana::size(bitmapWidth / 4,               bitmapHeight / 4)
 					);
 					rectangle toPart(nana::point(0, 0), nana::size(bitmapWidth, bitmapHeight));
-					tabpanel_graph.stretch(fromPart, bitmap_graphics, toPart);
+					viewport_copy.stretch(fromPart, bitmap_graphics, toPart);
 				}
 				else {
 					rectangle fromPart(
-						nana::point(0 - fp->offsetX, 0 - fp->offsetY) + viewport_pos
+						nana::point(0 - fp->offsetX, 0 - fp->offsetY)
 						,nana::size(bitmapWidth,     bitmapHeight)
 					);
 					rectangle toPart(
 						nana::point(xPos - xPos / 4,    yPos - yPos / 4)
 						,nana::size(bitmapWidth / 4,    bitmapHeight / 4)
 					);
-					tabpanel_graph.stretch(fromPart, bitmap_graphics, toPart);
+					viewport_copy.stretch(fromPart, bitmap_graphics, toPart);
 				}
 
 				//Confusing thing about nana:
 				//With bitblt x.bitblt(..., y... means x is the destination and y is the source
 				//With stretch, x.stretch(..., y... means y is the destination and x is the source
-				
-				tabpanel_dw.update();
+
+				viewport_dw.update();
 			}
 
 			canvas.changeParameters([=, &canvas](FractalParameters& P)
@@ -2271,7 +2286,7 @@ Fractalforums thread: https://fractalforums.org/other/55/explore-fractals-inflec
 		assert( dynamic_cast<NanaBitmapManager*>(canvas->bitmapManager.get()) != nullptr ); //it is a NanaBitmapManager
 
 		if (canvas == activeCanvas) {
-			tabpanel_dw.update();
+			viewport_dw.update();
 		}
 	}
 
@@ -2892,11 +2907,13 @@ int GUI_main(FractalParameters& defaultParameters, uint number_of_threads, Fract
 						return true;
 					}
 					auto panel = fm.tabs.panels[ tbar.activated() ];
-					if (panel->kind() == TabKind::Fractal) {
+					if (panel->kind() == TabKind::Fractal)
+					{
 						shared_ptr<FractalPanel> panel_ = static_pointer_cast<FractalPanel>(panel);
 						{
 							detail::bedrock::root_guard rg{brock, fm};
-							fm.create_fractal_tab(panel_->canvas.P(), panel_->canvas.P().get_procedure().name());
+
+							fm.create_fractal_tab(panel_->canvas.P(), panel_->canvas.P().get_procedure().name(), panel_->showing_sidepanel);
 						}
 						API::refresh_window(fm);
 					}

@@ -255,7 +255,7 @@ public:
 		return ret;
 	}
 
-	void renderSilverNewWork() {
+	void renderSilverWorkLoop() {
 		while (true) {
 			nullable<SilverWorkItem> work = getFromQueue();
 			if (work.isnull) {
@@ -264,7 +264,7 @@ public:
 			else {
 				//There is new work. The thread is reused:
 				SilverWorkItem& w = work.v;
-				renderSilverRect2(w.bitmap_render_responsibility, w.xmin, w.xmax, w.ymin, w.ymax, w.sameTop, w.iterTop, w.sameBottom, w.iterBottom, w.sameLeft, w.iterLeft, w.sameRight, w.iterRight);
+				renderSilverRect(w.bitmap_render_responsibility, w.xmin, w.xmax, w.ymin, w.ymax, w.sameTop, w.iterTop, w.sameBottom, w.iterBottom, w.sameLeft, w.iterLeft, w.sameRight, w.iterRight);
 			}
 		}
 	}
@@ -387,13 +387,6 @@ public:
 				zrsqr = zr * zr;
 				zisqr = zi * zi;
 				iterationCount++;
-				//1 mul, 2 sqr
-				//4 add
-
-				//todo: benchmark https://en.wikipedia.org/wiki/Plotting_algorithms_for_the_Mandelbrot_set#Optimized_escape_time_algorithms
-				//1 mul, 2 sqr
-				//4 add
-				//same number of operators, but it may a have different effect on pipelining
 			}
 		}
 		if constexpr(
@@ -985,7 +978,7 @@ public:
 
 		bitmap_render_responsibility means that this tile should compute and set the colors of its pixels to the bitmap after it is finished. The function can pass the responsiblity on to subtiles through its recursive calls. It's not entirely clear how long the passing should continue for the best performance. When oversampling is used, it's important not to continue for too long because a tile can be smaller than a pixel. (Each pixel is a raster of oversampling×oversampling calculated points.) There would be double work done if every tile that has overlap with some pixel calculates its color. See the explanation of stop_creating_threads.
 	*/
-	void renderSilverRect2(bool bitmap_render_responsibility, uint xmin, uint xmax, uint ymin, uint ymax, bool sameTop, uint iterTop, bool sameBottom, uint iterBottom, bool sameLeft, uint iterLeft, bool sameRight, uint iterRight)
+	void renderSilverRect(bool bitmap_render_responsibility, uint xmin, uint xmax, uint ymin, uint ymax, bool sameTop, uint iterTop, bool sameBottom, uint iterBottom, bool sameLeft, uint iterLeft, bool sameRight, uint iterRight)
 	{
 		if (renderID != canvas.lastRenderID) {
 			if(debug) cout << "Render " << renderID << " cancelled; terminating thread" << endl;
@@ -1071,39 +1064,23 @@ public:
 				sameLeftBottom = isSameVerticalLine(y, ymax, xmin);
 			}
 
-			if (renderID == canvas.lastRenderID) {
-				//if (threadCount < canvas.number_of_threads && !stop_creating_threads) {
-				//if (queue_waiting_threads > 0 && !stop_creating_threads) {
-				/*
-				unique_lock<mutex> changelock(queue_changes);
-				bool check = work_queue.empty() && !stop_creating_threads;
-				changelock.unlock();
-				if (check) {
-				*/
-				if (work_queue.empty() && !stop_creating_threads) {
-				/*
-					addToThreadcount(1);
-					thread t(&Render::renderSilverRect2, this, true, pass_on_bitmap_render_responsibility, xmin, xmax, ymin, y, sameTop, iterTop, sameNewLine, iterNewLine, sameLeftTop, iterLeftTop, sameRightTop, iterRightTop);
-					*/
-
+			if (renderID == canvas.lastRenderID)
+			{
+				if (work_queue.empty() && !stop_creating_threads)
+				{
 					addToQueue(pass_on_bitmap_render_responsibility, xmin, xmax, ymin, y, sameTop, iterTop, sameNewLine, iterNewLine, sameLeftTop, iterLeftTop, sameRightTop, iterRightTop);
 
-					renderSilverRect2(pass_on_bitmap_render_responsibility, xmin, xmax, y, ymax, sameNewLine, iterNewLine, sameBottom, iterBottom, sameLeftBottom, iterLeftBottom, sameRightBottom, iterRightBottom);
-
-					/*
-					t.join();
-					inNewThread = false; //t is now the new thread
-					*/
+					renderSilverRect(pass_on_bitmap_render_responsibility, xmin, xmax, y, ymax, sameNewLine, iterNewLine, sameBottom, iterBottom, sameLeftBottom, iterLeftBottom, sameRightBottom, iterRightBottom);
 				}
 				else {
 					if (height - ymax < 0.5*height) {
-						renderSilverRect2(pass_on_bitmap_render_responsibility, xmin, xmax, ymin, y, sameTop, iterTop, sameNewLine, iterNewLine, sameLeftTop, iterLeftTop, sameRightTop, iterRightTop);
-						renderSilverRect2(pass_on_bitmap_render_responsibility, xmin, xmax, y, ymax, sameNewLine, iterNewLine, sameBottom, iterBottom, sameLeftBottom, iterLeftBottom, sameRightBottom, iterRightBottom);
+						renderSilverRect(pass_on_bitmap_render_responsibility, xmin, xmax, ymin, y, sameTop, iterTop, sameNewLine, iterNewLine, sameLeftTop, iterLeftTop, sameRightTop, iterRightTop);
+						renderSilverRect(pass_on_bitmap_render_responsibility, xmin, xmax, y, ymax, sameNewLine, iterNewLine, sameBottom, iterBottom, sameLeftBottom, iterLeftBottom, sameRightBottom, iterRightBottom);
 					}
 					else {
 						//same in different order. The intention is that the center of the screen receives priority.
-						renderSilverRect2(pass_on_bitmap_render_responsibility, xmin, xmax, y, ymax, sameNewLine, iterNewLine, sameBottom, iterBottom, sameLeftBottom, iterLeftBottom, sameRightBottom, iterRightBottom);
-						renderSilverRect2(pass_on_bitmap_render_responsibility, xmin, xmax, ymin, y, sameTop, iterTop, sameNewLine, iterNewLine, sameLeftTop, iterLeftTop, sameRightTop, iterRightTop);
+						renderSilverRect(pass_on_bitmap_render_responsibility, xmin, xmax, y, ymax, sameNewLine, iterNewLine, sameBottom, iterBottom, sameLeftBottom, iterLeftBottom, sameRightBottom, iterRightBottom);
+						renderSilverRect(pass_on_bitmap_render_responsibility, xmin, xmax, ymin, y, sameTop, iterTop, sameNewLine, iterNewLine, sameLeftTop, iterLeftTop, sameRightTop, iterRightTop);
 					}
 				}
 			}
@@ -1137,34 +1114,22 @@ public:
 				sameLeftBottom = isSameHorizontalLine(xmin, x, ymax);
 				sameRightBottom = isSameHorizontalLine(x, xmax, ymax);
 			}
-			if (renderID == canvas.lastRenderID) {
-				//if (queue_waiting_threads > 0 && !stop_creating_threads) {
-				/*
-				unique_lock<mutex> changelock(queue_changes);
-				bool check = work_queue.empty() && !stop_creating_threads;
-				changelock.unlock();
-				if (check) {
-				*/
-				//if (threadCount < canvas.number_of_threads && !stop_creating_threads) {
-				if (work_queue.empty() && !stop_creating_threads) {
-				/*
-					addToThreadcount(1);
-					thread t(&Render::renderSilverRect2, this, true, pass_on_bitmap_render_responsibility, xmin, x, ymin, ymax, sameLeftTop, iterLeftTop, sameLeftBottom, iterLeftBottom, sameLeft, iterLeft, sameNewLine, iterNewLine);
-					*/
+			if (renderID == canvas.lastRenderID)
+			{
+				if (work_queue.empty() && !stop_creating_threads)
+				{
 					addToQueue(pass_on_bitmap_render_responsibility, xmin, x, ymin, ymax, sameLeftTop, iterLeftTop, sameLeftBottom, iterLeftBottom, sameLeft, iterLeft, sameNewLine, iterNewLine);
 
-					renderSilverRect2(pass_on_bitmap_render_responsibility, x, xmax, ymin, ymax, sameRightTop, iterRightTop, sameRightBottom, iterRightBottom, sameNewLine, iterNewLine, sameRight, iterRight);
-					/*t.join();
-					inNewThread = false; //t is now the new thread*/
+					renderSilverRect(pass_on_bitmap_render_responsibility, x, xmax, ymin, ymax, sameRightTop, iterRightTop, sameRightBottom, iterRightBottom, sameNewLine, iterNewLine, sameRight, iterRight);
 				}
 				else {
 					if (width - xmax < 0.5*width) {
-						renderSilverRect2(pass_on_bitmap_render_responsibility, xmin, x, ymin, ymax, sameLeftTop, iterLeftTop, sameLeftBottom, iterLeftBottom, sameLeft, iterLeft, sameNewLine, iterNewLine);
-						renderSilverRect2(pass_on_bitmap_render_responsibility, x, xmax, ymin, ymax, sameRightTop, iterRightTop, sameRightBottom, iterRightBottom, sameNewLine, iterNewLine, sameRight, iterRight);
+						renderSilverRect(pass_on_bitmap_render_responsibility, xmin, x, ymin, ymax, sameLeftTop, iterLeftTop, sameLeftBottom, iterLeftBottom, sameLeft, iterLeft, sameNewLine, iterNewLine);
+						renderSilverRect(pass_on_bitmap_render_responsibility, x, xmax, ymin, ymax, sameRightTop, iterRightTop, sameRightBottom, iterRightBottom, sameNewLine, iterNewLine, sameRight, iterRight);
 					}
 					else {
-						renderSilverRect2(pass_on_bitmap_render_responsibility, x, xmax, ymin, ymax, sameRightTop, iterRightTop, sameRightBottom, iterRightBottom, sameNewLine, iterNewLine, sameRight, iterRight);
-						renderSilverRect2(pass_on_bitmap_render_responsibility, xmin, x, ymin, ymax, sameLeftTop, iterLeftTop, sameLeftBottom, iterLeftBottom, sameLeft, iterLeft, sameNewLine, iterNewLine);
+						renderSilverRect(pass_on_bitmap_render_responsibility, x, xmax, ymin, ymax, sameRightTop, iterRightTop, sameRightBottom, iterRightBottom, sameNewLine, iterNewLine, sameRight, iterRight);
+						renderSilverRect(pass_on_bitmap_render_responsibility, xmin, x, ymin, ymax, sameLeftTop, iterLeftTop, sameLeftBottom, iterLeftBottom, sameLeft, iterLeft, sameNewLine, iterNewLine);
 					}
 				}
 			}
@@ -1187,16 +1152,10 @@ public:
 		}
 		
 		pixelGroupings += 2;
-
-		/*
-		if (inNewThread) {
-			//thread is about to end: wait for new work
-			renderSilverNewWork();
-		}
-		*/
 	}
 
-	void renderSilverFull2() {
+	void renderSilverFull()
+	{
 		//This calculates a raster of points first and then launches threads for each tile in the raster.
 		//"Silver" refers to the Mariani-Silver algorithm.
 		//Use the option "View guessed pixels" in the program while in a sparse area to see how it works.
@@ -1312,12 +1271,7 @@ public:
 				bool sameLeft = isSameList[(lineNumH * tiles + lineNumV) * 2 + 1];
 				bool sameRight = isSameList[((lineNumH + 1) * tiles + lineNumV) * 2 + 1];
 
-				/*if (created_threads < canvas.number_of_threads) {
-					threadsTiles[created_threads++] = thread(&Render::renderSilverRect2, this, true, true, thisImin, thisImax, thisJmin, thisJmax, sameTop, iterTop, sameBottom, iterBottom, sameLeft, iterLeft, sameRight, iterRight);
-				}
-				else {*/
-					addToQueue(true, thisImin, thisImax, thisJmin, thisJmax, sameTop, iterTop, sameBottom, iterBottom, sameLeft, iterLeft, sameRight, iterRight);
-				//}
+				addToQueue(true, thisImin, thisImax, thisJmin, thisJmax, sameTop, iterTop, sameBottom, iterBottom, sameLeft, iterLeft, sameRight, iterRight);
 			}
 		}
 
@@ -1325,7 +1279,7 @@ public:
 		vector<thread> threadsTiles(canvas.number_of_threads);
 		created_threads = 0;
 		for (int k=0; k<canvas.number_of_threads; k++) {
-			threadsTiles[created_threads++] = thread(&Render::renderSilverNewWork, this);
+			threadsTiles[created_threads++] = thread(&Render::renderSilverWorkLoop, this);
 		}
 		cout << "Calculating tiles with " << created_threads << " threads" << endl;
 
@@ -1378,7 +1332,7 @@ public:
 			spiral_test();
 		}
 		else {
-			renderSilverFull2();
+			renderSilverFull();
 		}
 		endTime = chrono::high_resolution_clock::now();
 		ended = true;

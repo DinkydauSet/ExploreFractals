@@ -28,8 +28,6 @@
 #include "utilities.cpp"
 #include "FractalCanvas.cpp"
 
-#include <cstdio>  
-
 // The advance function of this class iterates through all points on the canvas in a spiral-shaped order, starting in the center, spiraling outwards.
 class spiraler {
 public:

@@ -41,26 +41,6 @@ bool operator==(const point& a, const point& b)
 
 void testfunction()
 {
-	//benchmark
-	/*
-	shared_ptr<BitmapManager> bitmapmanager = make_shared<SimpleBitmapManager>();
-	FractalParameters P;
-	P.resize(3000, 1500, 1, 1);
-	FractalCanvas canvas(P, 1, bitmapmanager, {});
-
-	switch (testmode) {
-		break; case testmode_t::fast_old: cout << "testmode: fast_old";
-		break; case testmode_t::fast_new_: cout << "testmode: fast_new";
-		break; case testmode_t::old: cout << "testmode: old";
-		break; case testmode_t::new_: cout << "testmode: new_";
-	}
-
-	timerstart
-	for (int i=0; i<5; i++)
-		canvas.renderBitmapFull(false, false);
-	timerend("5 bitmap renders")
-	*/
-
 	if constexpr(debug) {
 		dotest("spiraler farthest neighbors", []
 		{
@@ -87,7 +67,7 @@ void testfunction()
 					int steps = s.farthest_neighbor_steps();
 
 
-					//check that afters steps steps there is indeed a neigbor
+					//check that after steps steps there is indeed a neigbor
 					spiraler copy = s;
 					for (int i=0; i<steps; i++)
 						copy.advance();

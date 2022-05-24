@@ -378,13 +378,9 @@ examples:
 		if (concurency < 1) {
 			NUMBER_OF_THREADS = 12;
 		}
-		else if (concurency < 6) {
+		else {
 			NUMBER_OF_THREADS = concurency;
 		}
-		else { //todo: https://github.com/DinkydauSet/ExploreFractals/issues/38
-			NUMBER_OF_THREADS = concurency - 1;
-		}
-		//NUMBER_OF_THREADS = 1; //todo
 		cout << "number of threads: " << NUMBER_OF_THREADS << endl;
 	}
 

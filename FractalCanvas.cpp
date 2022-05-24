@@ -483,6 +483,7 @@ public:
 		if(debug) cout << "FractalCanvas other active threads count changed to " << otherActiveThreads << endl;
 	}
 
+	//todo: move these index calculating functions out of class FractalCanvas. They're more generally applicable.
 
 	//	returns the index in ptPixels of (x, y) in the bitmap
 	// When bitmap_zoom > 1 this returns the index of the topleft corner pixel of the block of pixels belonging to this coordinate.
@@ -559,8 +560,9 @@ public:
 		assert(yfrom >= 0); assert(yfrom <= height_resolution);
 		assert(yto >= yfrom); assert(yto <= height_resolution);
 
-		if (highlight_guessed == false) {
-			//0.55
+		//One implementation that always works (with oversampling and bitmap zoom) is significantly slower. That's why I have a dedicated implementation for every case:
+		if (highlight_guessed == false)
+		{
 			if (bitmap_zoom == 1 && samples == 1) {
 				for (uint py=yfrom; py<yto; py++)
 				{
@@ -931,63 +933,32 @@ void saveImage(FractalCanvas* canvas, string filename, bool cleanup = true) {
 	uint height_resolution = canvas->P().height_resolution();
 	uint bitmap_zoom = canvas->P().get_bitmap_zoom();
 
-	/*
-		These loops performs conversion.
-
-		PNG requires RGBA-values in big-endian order. The colors in this program are ARGB stored in little-endian order. Lodepng interprets the data correctly when delivered as ABGR (the reserve order of RGBA) because of the endianness difference. This comes down to swapping red and blue.
-		 
-		 I convert the colors to ABGR in the original array to reduce memory usage. That means that after saving the PNG, the colors may need to be reverted to their original values.
-	*/
+	//
+	//	These loops performs conversion.
+	//
+	//	PNG requires RGBA-values in big-endian order. The colors in this program are ARGB stored in little-endian order. Lodepng interprets the data correctly when delivered as ABGR (the reserve order of RGBA) because of the endianness difference. This comes down to swapping red and blue.
+	//	 
+	//	 I convert the colors to ABGR in the original array to reduce memory usage. That means that after saving the PNG, the colors may need to be reverted to their original values.
+	//
 	if (bitmap_zoom > 1)
 	{
 		//I don't want to save the zoomed bitmap. This loop uses the existing array (which is large enough) to create an unzoomed bitmap.
-		//todo
-		/*
-		for (uint y=0; y< height_resolution; y++) {
-			for (uint x=0; x< width_resolution; x++)
-			{
-				uint pixelIndex = canvas->pixelIndex_of_pixelXY(x, y);
-				const ARGB pixel = canvas->ptPixels[pixelIndex];
-				
-				ARGB r,g,b;
-				r = (pixel & 0x00ff0000);
-				g = (pixel & 0x0000ff00);
-				b = (pixel & 0x000000ff);
-
-				canvas->ptPixels[width_resolution * y + x] = (
-					0xff000000 //always use full opacity (no transparency)
-					| r >> 16
-					| g
-					| b << 16
-				);
-			}
+		for (uint y=0; y< height_resolution; y++)
+		for (uint x=0; x< width_resolution; x++)
+		{
+			uint pixelIndex = canvas->pixelIndex_of_pixelXY(x, y);
+			const ARGB pixel = canvas->ptPixels[pixelIndex];
+			canvas->ptPixels[width_resolution * y + x] = rgb(pixel.B, pixel.G, pixel.R);
 		}
-		*/
 	}
 	else
 	{
-		for (uint y=0; y< height_resolution; y++) {
-			for (uint x=0; x< width_resolution; x++)
-			{
-				uint pixelIndex = canvas->pixelIndex_of_pixelXY(x, y);
-				ARGB& pixel = canvas->ptPixels[pixelIndex];
-				
-				/*ARGB r,g,b;
-				r = (pixel & 0x00ff0000);
-				g = (pixel & 0x0000ff00);
-				b = (pixel & 0x000000ff);
-
-				pixel = (
-					0xff000000 //always use full opacity (no transparency)
-					| r >> 16
-					| g
-					| b << 16
-				);
-				*/
-
-				//pixel = rgb(pixel.
-				pixel = rgb(pixel.B, pixel.G, pixel.R);
-			}
+		for (uint y=0; y< height_resolution; y++)
+		for (uint x=0; x< width_resolution; x++)
+		{
+			uint pixelIndex = canvas->pixelIndex_of_pixelXY(x, y);
+			ARGB& pixel = canvas->ptPixels[pixelIndex];
+			pixel = rgb(pixel.B, pixel.G, pixel.R);
 		}
 	}
 

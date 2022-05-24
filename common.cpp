@@ -69,7 +69,7 @@ string to_string(double_c c, std::streamsize precision = 5, bool fixed_ = true) 
 
 //Constants
 
-constexpr double PROGRAM_VERSION = 10.1;
+constexpr double PROGRAM_VERSION = 11.0;
 constexpr uint NUMBER_OF_TRANSFORMATIONS = 7 + 1;
 //todo: remove if the old mariani silver algortihm is not used anymore
 constexpr uint MAXIMUM_TILE_SIZE = 50; //tiles in renderSilverRect smaller than this do not get subdivided.
@@ -149,7 +149,7 @@ constexpr Procedure HIGH_POWER =        { 13, true,     33554432,   "High power 
 constexpr Procedure RECURSIVE_FRACTAL = { 15, true,     2,          "Recursive Fractal",    false,     false,     ProcedureKind::Other };
 constexpr Procedure PURE_MORPHINGS =    { 17, true,     2,          "Pure Julia morphings", false,     false,     ProcedureKind::Other };
 constexpr Procedure M512 =              { 18, true,     512,        "Mandelbrot power 512", true,      false,     ProcedureKind::Mandelbrot };
-constexpr Procedure DEBUG_TEST          { 19, false,		2,			"debug test",			false,     false,	  ProcedureKind::Other };
+constexpr Procedure DEBUG_TEST          { 19, false,	    2,          "debug test",           false,     false,     ProcedureKind::Other };
 
 constexpr Procedure getProcedureObject(int id) {
 	switch (id) {
@@ -164,7 +164,7 @@ constexpr Procedure getProcedureObject(int id) {
 		case RECURSIVE_FRACTAL.id: return RECURSIVE_FRACTAL;
 		case PURE_MORPHINGS.id:    return PURE_MORPHINGS;
 		case M512.id:              return M512;
-		case DEBUG_TEST.id:        return DEBUG_TEST; //todo: remove
+		case DEBUG_TEST.id:        return DEBUG_TEST;
 	}
 	return NOT_FOUND;
 }
